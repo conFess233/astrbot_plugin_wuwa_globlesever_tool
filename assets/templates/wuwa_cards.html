@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1080px; color: #eff7f5; font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; }
+    body { padding: 42px; background: radial-gradient(circle at 88% 3%, #244f50 0, #142d32 34%, #09161c 100%); }
+    .shell { border: 1px solid rgba(139, 220, 203, .26); border-radius: 30px; padding: 32px; background: rgba(7, 21, 26, .88); box-shadow: 0 24px 70px rgba(0, 0, 0, .35); }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+    h1 { margin: 0; font-size: 38px; letter-spacing: 1px; }
+    .sub, .muted { color: #9ab4b4; }
+    .notice { margin: -8px 0 24px; padding: 12px 16px; border-radius: 12px; color: #ffd897; background: rgba(171, 106, 31, .18); }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .role { position: relative; min-height: 210px; overflow: hidden; border: 1px solid rgba(140, 201, 193, .2); border-radius: 20px; background: linear-gradient(135deg, rgba(29, 61, 66, .82), rgba(14, 35, 42, .9)); }
+    .portrait { position: absolute; right: -12px; bottom: 0; width: 205px; height: 205px; object-fit: contain; object-position: bottom right; filter: drop-shadow(0 8px 18px rgba(0,0,0,.35)); }
+    .role-content { position: relative; z-index: 1; width: 66%; padding: 20px; }
+    .name { font-size: 27px; font-weight: 700; }
+    .stars { color: #f5cd74; margin: 3px 0 13px; letter-spacing: 2px; }
+    .facts { display: grid; grid-template-columns: repeat(2, max-content); gap: 8px 18px; font-size: 20px; }
+    .tag { display: inline-block; margin-top: 14px; padding: 5px 10px; border-radius: 999px; color: #97daca; background: rgba(57, 139, 127, .18); }
+    .empty { padding: 64px 24px; text-align: center; font-size: 26px; color: #9ab4b4; }
+    .detail { display: grid; grid-template-columns: 410px 1fr; gap: 24px; }
+    .hero { position: relative; min-height: 570px; overflow: hidden; border-radius: 24px; background: linear-gradient(160deg, #254d50, #10252c); }
+    .hero img.main { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; }
+    .hero-badge { position: absolute; left: 18px; bottom: 18px; padding: 9px 13px; border-radius: 12px; background: rgba(3, 14, 18, .82); }
+    .panel { padding: 24px; border: 1px solid rgba(140, 201, 193, .2); border-radius: 24px; background: rgba(18, 43, 49, .72); }
+    .rows { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .stat { padding: 16px; border-radius: 15px; background: rgba(4, 18, 23, .55); }
+    .stat b { display: block; margin-top: 5px; font-size: 25px; }
+    .score { margin-top: 18px; padding: 22px; border-radius: 18px; text-align: center; font-size: 35px; color: #f1d487; background: rgba(125, 100, 41, .18); }
+    .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
+    .metric { padding: 22px; border-radius: 18px; background: rgba(20, 50, 57, .78); }
+    .metric strong { display: block; margin-top: 5px; font-size: 34px; }
+    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .chart { padding: 22px; border-radius: 20px; background: rgba(12, 33, 39, .8); }
+    .chart h2 { margin: 0 0 16px; font-size: 24px; }
+    .bar-row { display: grid; grid-template-columns: 90px 1fr 42px; align-items: center; gap: 10px; margin: 12px 0; }
+    .bar { height: 12px; overflow: hidden; border-radius: 999px; background: #18363d; }
+    .bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #5bc4ae, #d6c36b); }
+    footer { margin-top: 24px; padding-top: 18px; border-top: 1px solid rgba(140, 201, 193, .14); color: #789293; }
+  </style>
+</head>
+<body>
+<main class="shell">
+  <header><h1>{{ heading }}</h1>{% if kind == 'character_list' %}<div class="sub">第 {{ page }} / {{ total_pages }} 页 · 共 {{ total_characters }} 名</div>{% endif %}</header>
+  {% if profile_note %}<div class="notice">{{ profile_note }}</div>{% endif %}
+
+  {% if kind == 'character_list' %}
+    {% if characters %}<section class="grid">
+      {% for item in characters %}<article class="role">
+        {% if item.image_url %}<img class="portrait" src="{{ item.image_url }}" alt="">{% endif %}
+        <div class="role-content"><div class="name">{{ item.name }}</div><div class="stars">{% for _ in range(item.star or 0) %}★{% endfor %}</div>
+          <div class="facts"><span>Lv. {{ item.level if item.level is not none else '---' }}</span><span>{{ item.chain if item.chain is not none else '---' }} 链</span><span>武器 {{ item.weapon_id or '---' }}</span><span>评分 {{ item.score }}</span></div>
+          <span class="tag">{{ {'api':'接口','manual':'手动','mixed':'混合'}.get(item.origin, '---') }}</span>
+          <div class="muted" style="margin-top:9px;font-size:14px">更新 {{ item.updated_at }}</div>
+        </div>
+      </article>{% endfor %}
+    </section>{% else %}<div class="empty">暂无角色记录<br><span class="muted">可用 /kh 修改 &lt;角色&gt; 等级 &lt;1-90&gt; 创建</span></div>{% endif %}
+  {% elif kind == 'character_detail' %}
+    <section class="detail"><div class="hero">{% if character.illustration_picture_url %}<img class="main" src="{{ character.illustration_picture_url }}" alt="">{% elif character.image_url %}<img class="main" src="{{ character.image_url }}" alt="">{% endif %}<div class="hero-badge">ID {{ character.character_id }} · {{ character.star or '---' }} 星 · 属性 ID {{ character.element_id or '---' }}</div></div>
+      <div class="panel"><div class="rows">
+        <div class="stat"><span class="muted">等级 · {{ {'api':'接口','manual':'手动'}.get(character.level_source, '---') }}</span><b>{{ character.level if character.level is not none else '---' }}</b></div>
+        <div class="stat"><span class="muted">共鸣链 · {{ {'api':'接口','manual':'手动'}.get(character.chain_source, '---') }}</span><b>{{ character.chain if character.chain is not none else '---' }}</b></div>
+        <div class="stat"><span class="muted">当前武器 · {{ {'api':'接口','manual':'手动'}.get(character.weapon_source, '---') }}</span><b>{{ character.weapon_id or '---' }}</b></div>
+        <div class="stat"><span class="muted">武器星级</span><b>---</b></div>
+        <div class="stat"><span class="muted">武器等级</span><b>{{ character.weapon_level if character.weapon_level is not none else '---' }}</b></div>
+        <div class="stat"><span class="muted">武器精炼</span><b>{{ character.weapon_refinement if character.weapon_refinement is not none else '---' }}</b></div>
+        <div class="stat"><span class="muted">武器类型</span><b>---</b></div>
+        <div class="stat"><span class="muted">记录来源</span><b>{{ {'api':'接口','manual':'手动','mixed':'混合'}.get(character.origin, '---') }}</b></div>
+      </div><div class="score">评分 {{ character.score }}</div></div>
+    </section>
+  {% elif kind == 'progress' %}
+    {% if total_characters %}<section class="summary">
+      <div class="metric"><span class="muted">角色总数</span><strong>{{ total_characters }}</strong></div><div class="metric"><span class="muted">平均等级</span><strong>{{ '%.1f'|format(average_level) if average_level is not none else '---' }}</strong></div><div class="metric"><span class="muted">共鸣链总数</span><strong>{{ total_chains if total_chains is not none else '---' }}</strong></div>
+      <div class="metric"><span class="muted">高等级角色 ≥80</span><strong>{{ high_level_count }}</strong></div><div class="metric"><span class="muted">高共鸣链角色 ≥3</span><strong>{{ high_chain_count }}</strong></div><div class="metric"><span class="muted">核心资料完整率</span><strong>{{ completeness_percent }}%</strong></div>
+    </section><section class="charts"><div class="chart"><h2>等级分布</h2>{% for label, count in level_buckets %}<div class="bar-row"><span>{{ label }}</span><div class="bar"><i style="width: {{ (count * 100 / total_characters)|round }}%"></i></div><b>{{ count }}</b></div>{% endfor %}</div>
+      <div class="chart"><h2>数据来源</h2>{% for label, count in origin_counts %}<div class="bar-row"><span>{{ label }}</span><div class="bar"><i style="width: {{ (count * 100 / total_characters)|round }}%"></i></div><b>{{ count }}</b></div>{% endfor %}<div class="score">评分 {{ score }}</div></div></section>
+    {% else %}<div class="empty">暂无角色记录</div>{% endif %}
+  {% endif %}
+  <footer>鸣潮国际服数据工具 · 最后更新 {% if kind == 'character_detail' %}{{ character.updated_at }}{% else %}{{ updated_at or '---' }}{% endif %}</footer>
+</main>
+</body>
+</html>
