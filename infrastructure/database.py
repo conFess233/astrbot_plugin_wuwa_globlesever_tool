@@ -150,6 +150,34 @@ _SCHEMA_V3 = """
 ALTER TABLE characters ADD COLUMN api_source_order INTEGER;
 """
 
+_SCHEMA_V4_TABLES = """
+CREATE TABLE IF NOT EXISTS player_snapshots (
+    uid TEXT PRIMARY KEY REFERENCES game_accounts(uid) ON DELETE CASCADE,
+    player_name TEXT,
+    head_photo INTEGER,
+    level INTEGER,
+    world_level INTEGER,
+    role_num INTEGER,
+    active_days INTEGER,
+    created_at_ms INTEGER,
+    energy INTEGER,
+    max_energy INTEGER,
+    store_energy INTEGER,
+    max_store_energy INTEGER,
+    energy_recover_time_ms INTEGER,
+    store_energy_recover_time_ms INTEGER,
+    liveness INTEGER,
+    liveness_max INTEGER,
+    liveness_unlock INTEGER,
+    weekly_inst_count INTEGER,
+    sound_box INTEGER,
+    boxes_json TEXT,
+    basic_boxes_json TEXT,
+    phantom_boxes_json TEXT,
+    refreshed_at TEXT NOT NULL
+);
+"""
+
 
 class DatabaseError(RuntimeError):
     """表示数据库版本或初始化失败。"""
@@ -224,6 +252,10 @@ class Database:
                     self._migrate_v3(connection)
                     connection.execute("PRAGMA user_version = 3")
                     current = 3
+                if current == 3:
+                    self._migrate_v4(connection)
+                    connection.execute("PRAGMA user_version = 4")
+                    current = 4
                 violations = connection.execute("PRAGMA foreign_key_check").fetchall()
                 if violations:
                     raise DatabaseError("数据库外键检查失败")
@@ -258,6 +290,24 @@ class Database:
         }
         if "api_source_order" not in existing:
             connection.executescript(_SCHEMA_V3)
+
+    @staticmethod
+    def _migrate_v4(connection: sqlite3.Connection) -> None:
+        existing = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(characters)").fetchall()
+        }
+        columns = {
+            "api_weapon_name": "TEXT",
+            "api_weapon_picture_url": "TEXT",
+            "api_weapon_star": "INTEGER",
+            "api_weapon_type_id": "TEXT",
+            "api_weapon_type_picture_url": "TEXT",
+        }
+        for name, definition in columns.items():
+            if name not in existing:
+                connection.execute(f"ALTER TABLE characters ADD COLUMN {name} {definition}")
+        connection.executescript(_SCHEMA_V4_TABLES)
 
     def _health_sync(self) -> dict[str, Any]:
         connection = self._connect()

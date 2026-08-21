@@ -29,6 +29,11 @@ class CharacterRecord:
     level: int | None
     chain: int | None
     weapon_id: str | None
+    weapon_name: str | None
+    weapon_picture_url: str | None
+    weapon_star: int | None
+    weapon_type_id: str | None
+    weapon_type_picture_url: str | None
     weapon_level: int | None
     weapon_refinement: int | None
     score_total: float | None
@@ -410,6 +415,11 @@ class LocalDataRepository:
             level=row["api_level"] if row["api_level"] is not None else row["manual_level"],
             chain=row["api_chain"] if row["api_chain"] is not None else row["manual_chain"],
             weapon_id=weapon_id,
+            weapon_name=row["api_weapon_name"] if weapon_id else None,
+            weapon_picture_url=row["api_weapon_picture_url"] if weapon_id else None,
+            weapon_star=row["api_weapon_star"] if weapon_id else None,
+            weapon_type_id=row["api_weapon_type_id"] if weapon_id else None,
+            weapon_type_picture_url=(row["api_weapon_type_picture_url"] if weapon_id else None),
             weapon_level=row["manual_weapon_level"] if weapon_id else None,
             weapon_refinement=row["manual_weapon_refinement"] if weapon_id else None,
             score_total=row["score_total"],

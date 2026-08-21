@@ -7,7 +7,7 @@ from enum import StrEnum
 from ..services.settings import PluginSettings
 
 _SPACE = re.compile(r"\s+")
-_PAGE = re.compile(r"^(\d+)页$")
+_PAGE = re.compile(r"^\d+页?$")
 _MODIFY = re.compile(r"^修改\s+(.+?)\s+(武器等级|武器精炼|共鸣链|等级|武器)\s+(.+)$")
 _RESET = re.compile(r"^重置\s+(.+?)\s+(武器等级|武器精炼|共鸣链|等级|武器|全部)$")
 
@@ -22,7 +22,9 @@ class CommandName(StrEnum):
     UNBIND = "unbind"
     CHARACTER_LIST = "character_list"
     CHARACTER_DETAIL = "character_detail"
-    PROGRESS = "progress"
+    ACCOUNT_INFO = "account_info"
+    DAILY = "daily"
+    EXPLORATION = "exploration"
     MODIFY = "modify"
     RESET = "reset"
     CHARACTER_DELETE = "character_delete"
@@ -35,7 +37,8 @@ class CommandName(StrEnum):
 READ_ONLY_COMMANDS = {
     CommandName.CHARACTER_LIST,
     CommandName.CHARACTER_DETAIL,
-    CommandName.PROGRESS,
+    CommandName.ACCOUNT_INFO,
+    CommandName.EXPLORATION,
 }
 
 
@@ -86,6 +89,10 @@ class CommandParser:
             prefix = f"{root} "
             if text[: len(prefix)].casefold() == prefix.casefold():
                 return text[len(prefix) :].strip()
+            if text[: len(root)].casefold() == root.casefold():
+                compact_tail = text[len(root) :].strip()
+                if compact_tail in {"账号", "账号信息", "角色", "日常", "探索", "登录", "帮助"}:
+                    return compact_tail
         return None
 
     def _parse_formal(self, tail: str) -> ParsedCommand:
@@ -97,6 +104,8 @@ class CommandParser:
             return self._one_argument(CommandName.LOGIN_CONFIRM, tail, "登录确认")
         if tail == "账号":
             return ParsedCommand(CommandName.ACCOUNT)
+        if tail == "账号信息":
+            return ParsedCommand(CommandName.ACCOUNT_INFO)
         if tail.startswith("切换 "):
             return self._one_argument(CommandName.SWITCH, tail, "切换")
         if tail == "同步":
@@ -106,11 +115,13 @@ class CommandParser:
         if tail.startswith("解绑 "):
             return self._one_argument(CommandName.UNBIND, tail, "解绑")
         if tail == "角色":
-            return ParsedCommand(CommandName.CHARACTER_LIST, ("1",))
+            return ParsedCommand(CommandName.CHARACTER_LIST)
         if tail.startswith("角色 "):
             return self._character_tail(tail.removeprefix("角色 ").strip())
-        if tail == "练度":
-            return ParsedCommand(CommandName.PROGRESS)
+        if tail == "日常":
+            return ParsedCommand(CommandName.DAILY)
+        if tail == "探索":
+            return ParsedCommand(CommandName.EXPLORATION)
 
         match = _MODIFY.fullmatch(tail)
         if match:
@@ -135,7 +146,9 @@ class CommandParser:
             (self.settings.keyword_help, CommandName.HELP),
             (self.settings.keyword_login, CommandName.LOGIN),
             (self.settings.keyword_account, CommandName.ACCOUNT),
-            (self.settings.keyword_progress, CommandName.PROGRESS),
+            (self.settings.keyword_account_info, CommandName.ACCOUNT_INFO),
+            (self.settings.keyword_daily, CommandName.DAILY),
+            (self.settings.keyword_exploration, CommandName.EXPLORATION),
         )
         for keywords, name in exact_groups:
             if any(text.casefold() == keyword.casefold() for keyword in keywords):
@@ -143,7 +156,7 @@ class CommandParser:
 
         for keyword in sorted(self.settings.keyword_character, key=len, reverse=True):
             if text.casefold() == keyword.casefold():
-                return ParsedCommand(CommandName.CHARACTER_LIST, ("1",), trigger="keyword")
+                return ParsedCommand(CommandName.CHARACTER_LIST, trigger="keyword")
             if text[: len(keyword)].casefold() != keyword.casefold():
                 continue
             remainder = text[len(keyword) :]
@@ -151,23 +164,15 @@ class CommandParser:
                 result = self._character_tail(remainder.strip())
                 return ParsedCommand(result.name, result.arguments, trigger="keyword")
             if _PAGE.fullmatch(remainder):
-                page = self._page_number(remainder)
-                return ParsedCommand(CommandName.CHARACTER_LIST, (page,), trigger="keyword")
+                raise CommandParseError("角色列表已取消分页，请直接使用 /kh 角色")
         return None
 
     def _character_tail(self, value: str) -> ParsedCommand:
         if _PAGE.fullmatch(value):
-            return ParsedCommand(CommandName.CHARACTER_LIST, (self._page_number(value),))
+            raise CommandParseError("角色列表已取消分页，请直接使用 /kh 角色")
         if not value:
             raise CommandParseError("角色参数不能为空")
         return ParsedCommand(CommandName.CHARACTER_DETAIL, (value,))
-
-    @staticmethod
-    def _page_number(value: str) -> str:
-        match = _PAGE.fullmatch(value)
-        if not match or int(match.group(1)) <= 0:
-            raise CommandParseError("页码必须是正整数")
-        return match.group(1)
 
     @staticmethod
     def _one_argument(name: CommandName, tail: str, prefix: str) -> ParsedCommand:

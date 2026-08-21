@@ -51,25 +51,31 @@
     "description": "角色关键词",
     "type": "list",
     "default": ["kh角色", "鸣潮角色"],
-    "hint": "支持角色参数、x页分页和查询对象前后置。"
+    "hint": "支持角色参数和查询对象前后置；角色列表生成完整长图。"
   },
-  "keyword_progress": {
-    "description": "练度关键词",
+  "keyword_account_info": {
+    "description": "账号信息关键词",
     "type": "list",
-    "default": ["kh练度", "鸣潮练度"],
+    "default": ["kh账号信息", "鸣潮账号信息"],
+    "hint": "支持查询对象前后置。"
+  },
+  "keyword_daily": {
+    "description": "日常关键词",
+    "type": "list",
+    "default": ["kh日常", "鸣潮日常"],
+    "hint": "仅允许查询本人当前账号。"
+  },
+  "keyword_exploration": {
+    "description": "探索关键词",
+    "type": "list",
+    "default": ["kh探索", "鸣潮探索"],
     "hint": "支持查询对象前后置。"
   },
   "allow_query_others": {
     "description": "允许查询其他 QQ",
     "type": "bool",
     "default": false,
-    "hint": "全局开关；仅开放角色列表、角色详情和练度的当前缓存。"
-  },
-  "character_page_size": {
-    "description": "角色列表每页数量",
-    "type": "int",
-    "default": 12,
-    "hint": "范围 1 到 30。"
+    "hint": "全局开关；开放角色、账号信息和探索查询，日常始终仅限本人。"
   },
   "login_link_ttl_minutes": {
     "description": "登录链接有效分钟数",

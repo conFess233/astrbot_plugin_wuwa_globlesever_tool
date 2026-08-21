@@ -136,15 +136,36 @@ class GlobalGuideClient:
             )
         weapon_present = None
         weapon_id = None
+        weapon_name = None
+        weapon_picture_url = None
+        weapon_star = None
+        weapon_type_id = None
+        weapon_type_picture_url = None
         weapon = data.get("weapon")
         if isinstance(weapon, dict) and "current" in weapon:
             current = weapon.get("current")
             if isinstance(current, dict) and str(current.get("gbId") or "").strip():
                 weapon_present = True
                 weapon_id = str(current["gbId"]).strip()
+                weapon_name = self._localized_name(current, language)
+                weapon_picture_url = self._optional_url(current.get("pictureUrl"))
+                weapon_star = self._integer(current.get("star"))
+                weapon_type = current.get("weaponType")
+                if isinstance(weapon_type, dict):
+                    weapon_type_id = str(weapon_type.get("gbId") or "").strip() or None
+                    weapon_type_picture_url = self._optional_url(weapon_type.get("pictureUrl"))
             else:
                 weapon_present = False
-        return GuideRoleDetail(chain, weapon_present, weapon_id)
+        return GuideRoleDetail(
+            chain,
+            weapon_present,
+            weapon_id,
+            weapon_name,
+            weapon_picture_url,
+            weapon_star,
+            weapon_type_id,
+            weapon_type_picture_url,
+        )
 
     async def _request(
         self,
@@ -206,3 +227,29 @@ class GlobalGuideClient:
             return int(value)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _optional_url(value: object) -> str | None:
+        result = str(value or "").strip()
+        return result if result.startswith("https://guide-res.aki-game.net/") else None
+
+    @staticmethod
+    def _localized_name(value: dict[str, Any], language: str) -> str | None:
+        direct = str(value.get("name") or "").strip()
+        if direct:
+            return direct
+        texts = value.get("texts")
+        if not isinstance(texts, list):
+            return None
+        candidates = [item for item in texts if isinstance(item, dict)]
+        preferred = next(
+            (
+                item
+                for item in candidates
+                if str(item.get("language") or "").casefold() == language.casefold()
+            ),
+            None,
+        )
+        selected = preferred or (candidates[0] if candidates else None)
+        result = str((selected or {}).get("name") or "").strip()
+        return result or None

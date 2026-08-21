@@ -43,6 +43,11 @@ class GuideRoleDetail:
     chain: int | None
     weapon_present: bool | None
     weapon_id: str | None
+    weapon_name: str | None
+    weapon_picture_url: str | None
+    weapon_star: int | None
+    weapon_type_id: str | None
+    weapon_type_picture_url: str | None
 
 
 class GuideSyncClient(Protocol):
@@ -70,6 +75,11 @@ class SyncedCharacter:
     chain: int | None
     weapon_present: bool | None
     weapon_id: str | None
+    weapon_name: str | None
+    weapon_picture_url: str | None
+    weapon_star: int | None
+    weapon_type_id: str | None
+    weapon_type_picture_url: str | None
     source_order: int
 
 

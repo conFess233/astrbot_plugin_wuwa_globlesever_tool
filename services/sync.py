@@ -220,6 +220,11 @@ class GuideSyncService:
             selected.chain,
             selected.weapon_present,
             selected.weapon_id,
+            selected.weapon_name,
+            selected.weapon_picture_url,
+            selected.weapon_star,
+            selected.weapon_type_id,
+            selected.weapon_type_picture_url,
             avatar.source_order,
         )
 
@@ -378,7 +383,9 @@ class GuideSyncService:
             return
         db.execute(
             "UPDATE characters SET api_owned = 0, api_level = NULL, api_chain = NULL, "
-            "api_weapon_id = NULL, api_weapon_present = NULL, api_source_order = ?, "
+            "api_weapon_id = NULL, api_weapon_present = NULL, api_weapon_name = NULL, "
+            "api_weapon_picture_url = NULL, api_weapon_star = NULL, api_weapon_type_id = NULL, "
+            "api_weapon_type_picture_url = NULL, api_source_order = ?, "
             "record_origin = 'manual', last_api_sync_at = ?, updated_at = ? "
             "WHERE profile_id = ? AND character_id = ?",
             (avatar.source_order, synced_at, synced_at, profile_id, avatar.role_id),
@@ -401,8 +408,10 @@ class GuideSyncService:
         db.execute(
             "INSERT INTO characters (profile_id, character_id, character_name_snapshot, "
             "record_origin, api_owned, api_chain, api_weapon_id, api_weapon_present, "
+            "api_weapon_name, api_weapon_picture_url, api_weapon_star, api_weapon_type_id, "
+            "api_weapon_type_picture_url, "
             "api_source_order, last_api_sync_at, updated_at) "
-            "VALUES (?, ?, ?, 'api', 1, ?, ?, ?, ?, ?, ?) "
+            "VALUES (?, ?, ?, 'api', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(profile_id, character_id) DO UPDATE SET "
             "character_name_snapshot = excluded.character_name_snapshot, api_owned = 1, "
             "api_chain = COALESCE(excluded.api_chain, characters.api_chain), "
@@ -412,7 +421,19 @@ class GuideSyncService:
             "api_weapon_id = CASE WHEN excluded.api_weapon_present IS NULL "
             "THEN characters.api_weapon_id ELSE excluded.api_weapon_id END, "
             "api_weapon_present = COALESCE(excluded.api_weapon_present, "
-            "characters.api_weapon_present), last_api_sync_at = excluded.last_api_sync_at, "
+            "characters.api_weapon_present), "
+            "api_weapon_name = CASE WHEN excluded.api_weapon_present IS NULL "
+            "THEN characters.api_weapon_name ELSE excluded.api_weapon_name END, "
+            "api_weapon_picture_url = CASE WHEN excluded.api_weapon_present IS NULL "
+            "THEN characters.api_weapon_picture_url ELSE excluded.api_weapon_picture_url END, "
+            "api_weapon_star = CASE WHEN excluded.api_weapon_present IS NULL "
+            "THEN characters.api_weapon_star ELSE excluded.api_weapon_star END, "
+            "api_weapon_type_id = CASE WHEN excluded.api_weapon_present IS NULL "
+            "THEN characters.api_weapon_type_id ELSE excluded.api_weapon_type_id END, "
+            "api_weapon_type_picture_url = CASE WHEN excluded.api_weapon_present IS NULL "
+            "THEN characters.api_weapon_type_picture_url "
+            "ELSE excluded.api_weapon_type_picture_url END, "
+            "last_api_sync_at = excluded.last_api_sync_at, "
             "updated_at = excluded.updated_at",
             (
                 profile_id,
@@ -421,6 +442,11 @@ class GuideSyncService:
                 character.chain,
                 character.weapon_id,
                 None if character.weapon_present is None else int(character.weapon_present),
+                character.weapon_name,
+                character.weapon_picture_url,
+                character.weapon_star,
+                character.weapon_type_id,
+                character.weapon_type_picture_url,
                 character.source_order,
                 synced_at,
                 synced_at,

@@ -24,10 +24,11 @@ class PluginSettings:
     keyword_help: tuple[str, ...]
     keyword_login: tuple[str, ...]
     keyword_account: tuple[str, ...]
+    keyword_account_info: tuple[str, ...]
     keyword_character: tuple[str, ...]
-    keyword_progress: tuple[str, ...]
+    keyword_daily: tuple[str, ...]
+    keyword_exploration: tuple[str, ...]
     allow_query_others: bool
-    character_page_size: int
     login_link_ttl_minutes: int
     confirm_ttl_minutes: int
     confirm_max_attempts: int
@@ -76,10 +77,15 @@ class PluginSettings:
             keyword_help=cls._keywords(values, "keyword_help", ("kh帮助", "鸣潮帮助")),
             keyword_login=cls._keywords(values, "keyword_login", ("kh登录", "鸣潮登录")),
             keyword_account=cls._keywords(values, "keyword_account", ("kh账号", "鸣潮账号")),
+            keyword_account_info=cls._keywords(
+                values, "keyword_account_info", ("kh账号信息", "鸣潮账号信息")
+            ),
             keyword_character=cls._keywords(values, "keyword_character", ("kh角色", "鸣潮角色")),
-            keyword_progress=cls._keywords(values, "keyword_progress", ("kh练度", "鸣潮练度")),
+            keyword_daily=cls._keywords(values, "keyword_daily", ("kh日常", "鸣潮日常")),
+            keyword_exploration=cls._keywords(
+                values, "keyword_exploration", ("kh探索", "鸣潮探索")
+            ),
             allow_query_others=bool(values.get("allow_query_others", False)),
-            character_page_size=cls._bounded_int(values, "character_page_size", 12, 1, 30),
             login_link_ttl_minutes=cls._bounded_int(values, "login_link_ttl_minutes", 5, 1, 30),
             confirm_ttl_minutes=cls._bounded_int(values, "confirm_ttl_minutes", 5, 1, 30),
             confirm_max_attempts=cls._bounded_int(values, "confirm_max_attempts", 5, 1, 10),

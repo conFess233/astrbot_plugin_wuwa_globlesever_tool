@@ -15,6 +15,7 @@ from .commands.parser import CommandParseError, CommandParser
 from .constants import PLUGIN_DISPLAY_NAME, PLUGIN_NAME, PLUGIN_VERSION
 from .domain.cards import CardMessage
 from .domain.login import LoginLinkMessage
+from .domain.player import PlayerDataError
 from .infrastructure.crypto import MasterKeyProvider, TokenCipher
 from .infrastructure.database import Database
 from .infrastructure.http import HttpClient
@@ -27,6 +28,7 @@ from .services.catalog import CatalogError, CharacterCatalog
 from .services.command_service import CommandService, CommandServiceError
 from .services.dashboard import DashboardService
 from .services.login_sessions import LoginSessionError, LoginSessionService
+from .services.player_data import PlayerDataService
 from .services.resource_cache import StaticImageCache
 from .services.settings import PluginSettings
 from .services.sync import GuideSyncService, SyncError
@@ -56,6 +58,7 @@ class WuWaGlobalServerPlugin(Star):
         self.accounts: AccountRepository | None = None
         self.login_sessions: LoginSessionService | None = None
         self.sync_service: GuideSyncService | None = None
+        self.player_data: PlayerDataService | None = None
         self.card_renderer: AstrBotCardRenderer | None = None
         self.commands: CommandService | None = None
         self.dashboard_service: DashboardService | None = None
@@ -170,12 +173,14 @@ class WuWaGlobalServerPlugin(Star):
             self.catalog,
             self.settings,
         )
+        self.player_data = PlayerDataService(self.database, self.cipher, self.http)
         self.card_renderer = AstrBotCardRenderer(
             self.plugin_root / "assets" / "templates" / "wuwa_cards.html",
             self.paths.media_cards,
             self._html_render_file,
             self.settings.render_timeout_seconds,
             StaticImageCache(self.paths.cache_character, self._fetch_static_image),
+            StaticImageCache(self.paths.cache_weapon, self._fetch_static_image),
         )
         self.commands = CommandService(
             self.repository,
@@ -184,6 +189,7 @@ class WuWaGlobalServerPlugin(Star):
             self.login_sessions,
             self.accounts,
             self.sync_service,
+            self.player_data,
             CardService(self.catalog, self.card_renderer),
         )
         self.backup_service = BackupService(self.database, self.paths, self.cipher)
@@ -267,6 +273,7 @@ class WuWaGlobalServerPlugin(Star):
             CommandServiceError,
             LocalDataError,
             LoginSessionError,
+            PlayerDataError,
             SyncError,
         ) as exc:
             result = str(exc)
@@ -392,6 +399,7 @@ class WuWaGlobalServerPlugin(Star):
         self.accounts = None
         self.login_sessions = None
         self.sync_service = None
+        self.player_data = None
         self.card_renderer = None
         self.commands = None
         self.dashboard_service = None

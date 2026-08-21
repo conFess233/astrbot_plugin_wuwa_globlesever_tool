@@ -75,6 +75,30 @@ class HttpClient:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError("响应不是有效的 UTF-8 JSON") from exc
 
+    async def post_json(
+        self,
+        url: str,
+        body: dict[str, Any],
+        *,
+        allowed_hosts: Collection[str],
+        max_bytes: int,
+    ) -> Any:
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or parsed.hostname not in allowed_hosts:
+            raise ValueError("接口地址不受信任")
+        if self.session is None or self.session.closed:
+            raise RuntimeError("HTTP Client 尚未初始化")
+        async with self.session.post(url, json=body) as response:
+            if response.status != 200:
+                raise ValueError(f"接口请求失败：HTTP {response.status}")
+            data = await response.read()
+            if len(data) > max_bytes:
+                raise ValueError("接口响应超过安全大小限制")
+            try:
+                return json.loads(data.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError("响应不是有效的 UTF-8 JSON") from exc
+
     def status(self) -> dict[str, Any]:
         return {
             "initialized": bool(self.session and not self.session.closed),

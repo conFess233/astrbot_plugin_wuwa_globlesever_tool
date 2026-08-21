@@ -103,6 +103,11 @@ class CharacterCatalog:
             raise CatalogError(f"角色名称存在歧义：{candidates}")
         return matches[0]
 
+    def get(self, character_id: str | int | None) -> CharacterDefinition | None:
+        if character_id is None:
+            return None
+        return self._by_id.get(str(character_id))
+
 
 def _optional_text(value: object) -> str | None:
     result = str(value or "").strip()

@@ -1,15 +1,15 @@
 """命令应用服务：校验权限、操作本地档案并生成文本结果。"""
 
-import math
-
 from ..commands.parser import CommandName, ParsedCommand
 from ..domain.cards import CardMessage
 from ..domain.login import LoginLinkMessage
+from ..domain.player import PlayerDataError
 from ..repositories.accounts import AccountRepository
 from ..repositories.local_data import CharacterRecord, LocalDataRepository
 from .cards import CardService
 from .catalog import CharacterCatalog
 from .login_sessions import LoginSessionService
+from .player_data import PlayerDataService
 from .settings import PluginSettings
 from .sync import GuideSyncService, SyncError
 
@@ -33,6 +33,7 @@ class CommandService:
         login_sessions: LoginSessionService | None = None,
         accounts: AccountRepository | None = None,
         sync_service: GuideSyncService | None = None,
+        player_data: PlayerDataService | None = None,
         cards: CardService | None = None,
     ):
         self.repository = repository
@@ -41,6 +42,7 @@ class CommandService:
         self.login_sessions = login_sessions
         self.accounts = accounts
         self.sync_service = sync_service
+        self.player_data = player_data
         self.cards = cards or CardService(catalog)
 
     async def execute(
@@ -79,6 +81,14 @@ class CommandService:
                 return f"{message}\n角色数据：同步服务尚未初始化"
             try:
                 synced = await self.sync_service.sync(actor_qq, result.default_uid)
+                if self.player_data is not None:
+                    try:
+                        await self.player_data.query(actor_qq, uid=result.default_uid)
+                    except PlayerDataError as exc:
+                        return (
+                            f"{message}\n首次同步：{synced.owned_count} 个角色"
+                            f"\n账号详情刷新失败：{exc}"
+                        )
                 return f"{message}\n首次同步：{synced.owned_count} 个角色"
             except SyncError as exc:
                 return f"{message}\n首次同步失败：{exc}"
@@ -105,13 +115,23 @@ class CommandService:
                 raise CommandServiceError("攻略站同步服务尚未初始化")
             uid = command.arguments[0] if command.arguments else None
             result = await self.sync_service.sync(actor_qq, uid)
-            return f"UID {result.uid} 同步成功，共获取 {result.owned_count} 个角色。"
+            account_note = ""
+            if self.player_data is not None:
+                try:
+                    await self.player_data.query(actor_qq, uid=result.uid)
+                except PlayerDataError as exc:
+                    account_note = f"\n账号详情刷新失败：{exc}"
+            return f"UID {result.uid} 同步成功，共获取 {result.owned_count} 个角色。{account_note}"
         if command.name == CommandName.CHARACTER_LIST:
             return await self._character_list(target_qq, command)
         if command.name == CommandName.CHARACTER_DETAIL:
             return await self._character_detail(target_qq, command)
-        if command.name == CommandName.PROGRESS:
-            return await self._progress(target_qq, command)
+        if command.name == CommandName.ACCOUNT_INFO:
+            return await self._player_card(target_qq, command, "account_info")
+        if command.name == CommandName.DAILY:
+            return await self._player_card(actor_qq, command, "daily")
+        if command.name == CommandName.EXPLORATION:
+            return await self._player_card(target_qq, command, "exploration")
         if command.name == CommandName.MODIFY:
             return await self._modify(actor_qq, command)
         if command.name == CommandName.RESET:
@@ -170,20 +190,21 @@ class CommandService:
             qq_id, external_query=command.target_qq is not None
         )
         records = await self.repository.list_characters(profile.profile_id)
-        page = int(command.arguments[0])
-        total_pages = max(1, math.ceil(len(records) / self.settings.character_page_size))
-        if page > total_pages:
-            raise CommandServiceError(f"页码超出范围，共 {total_pages} 页")
-        start = (page - 1) * self.settings.character_page_size
-        selected = records[start : start + self.settings.character_page_size]
-        heading = f"QQ {qq_id} 角色" if command.target_qq else f"{profile.label}角色"
+        player = None
+        if profile.uid and self.player_data is not None:
+            try:
+                player = await self.player_data.cached(
+                    qq_id, external_query=command.target_qq is not None
+                )
+            except PlayerDataError:
+                player = None
+        heading = "角色总览"
         return await self.cards.character_list(
             profile,
             heading,
-            page,
-            total_pages,
             len(records),
-            selected,
+            records,
+            player,
         )
 
     async def _character_detail(self, qq_id: str, command: ParsedCommand) -> str | CardMessage:
@@ -197,13 +218,20 @@ class CommandService:
         profile_label = "目标用户" if command.target_qq else profile.label
         return await self.cards.character_detail(profile, profile_label, record)
 
-    async def _progress(self, qq_id: str, command: ParsedCommand) -> str | CardMessage:
-        profile = await self.repository.active_profile(
-            qq_id, external_query=command.target_qq is not None
-        )
-        records = await self.repository.list_characters(profile.profile_id)
-        heading = f"QQ {qq_id} 练度概览" if command.target_qq else f"{profile.label}练度概览"
-        return await self.cards.progress(profile, heading, records)
+    async def _player_card(
+        self,
+        qq_id: str,
+        command: ParsedCommand,
+        kind: str,
+    ) -> str | CardMessage:
+        if self.player_data is None:
+            raise CommandServiceError("玩家详情服务尚未初始化")
+        snapshot = await self.player_data.query(qq_id, external_query=command.target_qq is not None)
+        if kind == "account_info":
+            return await self.cards.account_info(snapshot)
+        if kind == "daily":
+            return await self.cards.daily(snapshot)
+        return await self.cards.exploration(snapshot)
 
     async def _modify(self, qq_id: str, command: ParsedCommand) -> str:
         character_query, field, raw_value = command.arguments
@@ -278,9 +306,11 @@ class CommandService:
     def _help() -> str:
         return (
             "鸣潮国际服数据工具\n"
-            "/kh 角色 [数字页] [@用户]\n"
+            "/kh 角色 [@用户]\n"
             "/kh 角色 <角色名|角色ID> [@用户]\n"
-            "/kh 练度 [@用户]\n"
+            "/kh 账号信息 [@用户]\n"
+            "/kh 日常\n"
+            "/kh 探索 [@用户]\n"
             "/kh 修改 <角色> 等级 <1-90>\n"
             "/kh 修改 <角色> 共鸣链 <0-6>\n"
             "/kh 重置 <角色> <等级|共鸣链|武器|武器等级|武器精炼|全部>\n"
@@ -290,5 +320,5 @@ class CommandService:
             "/kh 同步 [UID]\n"
             "/kh 清除数据 | /kh 确认 <确认码>\n"
             "/kh 语言 <zh-CN|zh-TW|en|ja|ko>\n"
-            "兼容关键词：kh角色、kh角色2页、kh角色 <角色>、kh练度。"
+            "兼容关键词：kh角色、kh角色 <角色>、kh账号信息、kh日常、kh探索。"
         )

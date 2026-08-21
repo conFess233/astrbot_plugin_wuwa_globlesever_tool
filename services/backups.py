@@ -313,7 +313,14 @@ class BackupService:
     ) -> dict[str, int]:
         source = sqlite3.connect(source_path)
         source.row_factory = sqlite3.Row
-        counts = {"users": 0, "credentials": 0, "accounts": 0, "characters": 0, "skipped": 0}
+        counts = {
+            "users": 0,
+            "credentials": 0,
+            "accounts": 0,
+            "snapshots": 0,
+            "characters": 0,
+            "skipped": 0,
+        }
         credential_map: dict[int, int] = {}
         profile_map: dict[int, int] = {}
         try:
@@ -477,6 +484,54 @@ class BackupService:
                         "updated_at = ? WHERE qq_id = ?",
                         (default_uid, active_profile_id, _iso(), row["qq_id"]),
                     )
+
+            source_tables = {
+                str(row["name"])
+                for row in source.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            }
+            if "player_snapshots" in source_tables:
+                source_columns = [
+                    str(row["name"])
+                    for row in source.execute("PRAGMA table_info(player_snapshots)")
+                ]
+                target_columns = {
+                    str(row["name"])
+                    for row in target.execute("PRAGMA table_info(player_snapshots)")
+                }
+                snapshot_columns = [column for column in source_columns if column in target_columns]
+                insert_columns = ", ".join(snapshot_columns)
+                placeholders = ", ".join("?" for _ in snapshot_columns)
+                updates = ", ".join(
+                    f"{column} = excluded.{column}"
+                    for column in snapshot_columns
+                    if column != "uid"
+                )
+                for row in source.execute(
+                    "SELECT player_snapshots.*, game_accounts.qq_id AS source_qq_id "
+                    "FROM player_snapshots "
+                    "JOIN game_accounts ON game_accounts.uid = player_snapshots.uid"
+                ):
+                    destination = target.execute(
+                        "SELECT qq_id FROM game_accounts WHERE uid = ?", (row["uid"],)
+                    ).fetchone()
+                    if destination is None or str(destination["qq_id"]) != str(row["source_qq_id"]):
+                        counts["skipped"] += 1
+                        continue
+                    values = [row[column] for column in snapshot_columns]
+                    if mode == "overwrite":
+                        target.execute(
+                            f"INSERT INTO player_snapshots ({insert_columns}) "
+                            f"VALUES ({placeholders}) ON CONFLICT(uid) DO UPDATE SET {updates}",
+                            values,
+                        )
+                        counts["snapshots"] += 1
+                    else:
+                        cursor = target.execute(
+                            f"INSERT OR IGNORE INTO player_snapshots ({insert_columns}) "
+                            f"VALUES ({placeholders})",
+                            values,
+                        )
+                        counts["snapshots"] += max(0, cursor.rowcount)
 
             columns = [str(row["name"]) for row in source.execute("PRAGMA table_info(characters)")]
             insert_columns = ", ".join(columns)
