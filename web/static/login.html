@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>鸣潮国际服账号登录</title>
+  <style>
+    :root { font-family: Inter, "Microsoft YaHei", sans-serif; color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px;
+      background: radial-gradient(circle at top, #204b55 0, #101719 42%, #090d0e 100%); color: #edf7f5; }
+    main { width: min(100%, 620px); border: 1px solid #6ee7d833; border-radius: 22px; padding: 30px;
+      background: #10191bdd; box-shadow: 0 24px 80px #0009; backdrop-filter: blur(18px); }
+    .brand { color: #6ee7d8; font-size: 13px; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { margin: 8px 0 10px; font-size: clamp(25px, 6vw, 38px); }
+    .lead { margin: 0 0 26px; color: #b5c8c5; line-height: 1.65; }
+    label { display: grid; gap: 8px; margin: 16px 0; color: #d9e8e5; }
+    input[type="email"], input[type="password"] { width: 100%; border: 1px solid #8ca7a244; border-radius: 12px;
+      background: #071011; color: inherit; padding: 13px 14px; font: inherit; outline: none; }
+    input:focus { border-color: #6ee7d8; box-shadow: 0 0 0 3px #6ee7d822; }
+    button { border: 0; border-radius: 12px; padding: 13px 18px; font: 650 15px inherit; cursor: pointer;
+      background: linear-gradient(135deg, #6ee7d8, #52b7d8); color: #071011; }
+    button:disabled { cursor: wait; opacity: .55; }
+    .status { min-height: 24px; margin: 14px 0 0; color: #ffd28d; line-height: 1.5; }
+    .hidden { display: none !important; }
+    .players { display: grid; gap: 10px; margin: 20px 0; }
+    .player { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center;
+      margin: 0; padding: 14px; border: 1px solid #8ca7a233; border-radius: 13px; background: #07101188; }
+    .player strong, .player small { display: block; }
+    .player small { color: #9eb3af; margin-top: 4px; }
+    .default { display: flex; gap: 6px; align-items: center; margin: 0; font-size: 13px; color: #b7cbc7; }
+    .code { margin: 22px 0; padding: 22px; border-radius: 16px; text-align: center; background: #6ee7d812;
+      border: 1px solid #6ee7d844; font: 700 clamp(32px, 10vw, 52px) ui-monospace, monospace; letter-spacing: .15em; }
+    .foot { margin-top: 24px; padding-top: 18px; border-top: 1px solid #ffffff12; color: #819793; font-size: 13px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+<main>
+  <div class="brand">Wuthering Waves · Global</div>
+  <h1>绑定国际服账号</h1>
+  <p class="lead" id="lead">凭据仅用于本次登录，不会保存密码。完成网页步骤后，还需回到发起登录的 QQ 会话确认。</p>
+
+  <section id="login-stage">
+    <form id="login-form">
+      <label>国际服邮箱<input id="email" type="email" autocomplete="username" maxlength="320" required></label>
+      <label>密码<input id="password" type="password" autocomplete="current-password" maxlength="256" required></label>
+      <div id="captcha"></div>
+      <button id="login-button" type="submit">登录并读取 UID</button>
+    </form>
+  </section>
+
+  <section id="select-stage" class="hidden">
+    <h2>选择要绑定的 UID</h2>
+    <p class="lead">至少选择一个，并指定一个默认 UID。未选择的已有绑定不会被删除。</p>
+    <form id="select-form">
+      <div id="players" class="players"></div>
+      <button id="select-button" type="submit">生成 QQ 确认码</button>
+    </form>
+  </section>
+
+  <section id="confirm-stage" class="hidden">
+    <h2>回到 QQ 完成确认</h2>
+    <div id="confirmation-code" class="code"></div>
+    <p class="lead">在原 QQ 会话发送：<strong>/kh 登录确认 上方确认码</strong></p>
+  </section>
+
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+  <div class="foot">不要把登录链接、验证码或页面内容转发给他人。关闭页面会清除浏览器内的临时会话。</div>
+</main>
+<script>
+(() => {
+  "use strict";
+  const marker = "/login/";
+  const markerIndex = location.pathname.lastIndexOf(marker);
+  const apiBase = markerIndex >= 0 ? location.pathname.slice(0, markerIndex + marker.length - 1) : "";
+  const initialToken = markerIndex >= 0 ? decodeURIComponent(location.pathname.slice(markerIndex + marker.length)) : "";
+  const state = { sessionToken: "", csrfToken: "", geetest: null, players: [] };
+  const $ = (id) => document.getElementById(id);
+  const status = (message) => { $("status").textContent = message || ""; };
+  const busy = (button, value) => { button.disabled = value; };
+
+  async function post(path, payload) {
+    const response = await fetch(`${apiBase}/${path}`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    let data = {};
+    try { data = await response.json(); } catch (_) { /* 显示统一错误 */ }
+    if (!response.ok) throw new Error(data.message || data.error || "请求失败，请重新发起登录");
+    return data;
+  }
+
+  async function exchange() {
+    if (!apiBase || !initialToken || initialToken === "session") throw new Error("登录链接无效或已过期");
+    const data = await post("exchange", { link_token: initialToken });
+    state.sessionToken = data.session_token;
+    state.csrfToken = data.csrf_token;
+    history.replaceState({}, "", `${apiBase}/session`);
+  }
+
+  async function submitCredentials(event, geetest = null) {
+    if (event) event.preventDefault();
+    const button = $("login-button");
+    busy(button, true);
+    status("正在安全登录并读取账号 UID…");
+    try {
+      const data = await post("submit", {
+        session_token: state.sessionToken,
+        csrf_token: state.csrfToken,
+        email: $("email").value,
+        password: $("password").value,
+        geetest,
+      });
+      if (data.status === "risk") {
+        status("需要完成人机验证。验证成功后会自动继续。");
+        await showGeetest(data.captcha_id);
+        return;
+      }
+      $("password").value = "";
+      state.players = Array.isArray(data.players) ? data.players : [];
+      renderPlayers();
+      $("login-stage").classList.add("hidden");
+      $("select-stage").classList.remove("hidden");
+      status("");
+    } catch (error) {
+      status(error.message);
+    } finally {
+      busy(button, false);
+    }
+  }
+
+  async function showGeetest(captchaId) {
+    if (!captchaId) throw new Error("人机验证配置无效");
+    if (!window.initGeetest4) {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://static.geetest.com/v4/gt4.js";
+        script.onload = resolve;
+        script.onerror = () => reject(new Error("无法加载人机验证"));
+        document.head.appendChild(script);
+      });
+    }
+    window.initGeetest4({ captchaId, product: "bind" }, (captcha) => {
+      state.geetest = captcha;
+      captcha.appendTo("#captcha");
+      captcha.onSuccess(() => {
+        const value = captcha.getValidate() || {};
+        submitCredentials(null, value);
+      });
+      captcha.showCaptcha();
+    });
+  }
+
+  function renderPlayers() {
+    const host = $("players");
+    host.replaceChildren();
+    state.players.forEach((player, index) => {
+      const row = document.createElement("div"); row.className = "player";
+      const selected = document.createElement("input"); selected.type = "checkbox"; selected.name = "uid";
+      selected.value = player.uid; selected.checked = true;
+      const text = document.createElement("span");
+      const title = document.createElement("strong"); title.textContent = player.player_name ? `${player.player_name} · ${player.uid}` : player.uid;
+      const meta = document.createElement("small"); meta.textContent = `${player.region_name || player.region_id}${player.level == null ? "" : ` · Lv.${player.level}`}`;
+      text.append(title, meta);
+      const defaultLabel = document.createElement("label"); defaultLabel.className = "default";
+      const defaultRadio = document.createElement("input"); defaultRadio.type = "radio"; defaultRadio.name = "default_uid";
+      defaultRadio.value = player.uid; defaultRadio.checked = index === 0;
+      defaultLabel.append(defaultRadio, document.createTextNode("默认"));
+      defaultRadio.addEventListener("change", () => { if (defaultRadio.checked) selected.checked = true; });
+      selected.addEventListener("change", () => { if (!selected.checked && defaultRadio.checked) defaultRadio.checked = false; });
+      row.append(selected, text, defaultLabel); host.append(row);
+    });
+  }
+
+  async function selectPlayers(event) {
+    event.preventDefault();
+    const button = $("select-button"); busy(button, true); status("正在生成确认码…");
+    try {
+      const selected = [...document.querySelectorAll('input[name="uid"]:checked')].map((item) => item.value);
+      const defaultItem = document.querySelector('input[name="default_uid"]:checked');
+      const data = await post("select", {
+        session_token: state.sessionToken,
+        csrf_token: state.csrfToken,
+        selected_uids: selected,
+        default_uid: defaultItem ? defaultItem.value : "",
+      });
+      $("confirmation-code").textContent = data.confirmation_code;
+      $("select-stage").classList.add("hidden");
+      $("confirm-stage").classList.remove("hidden");
+      status("确认码仅可使用一次，并会很快过期。");
+    } catch (error) { status(error.message); } finally { busy(button, false); }
+  }
+
+  $("login-form").addEventListener("submit", submitCredentials);
+  $("select-form").addEventListener("submit", selectPlayers);
+  exchange().catch((error) => {
+    $("login-form").querySelectorAll("input,button").forEach((item) => { item.disabled = true; });
+    status(error.message);
+  });
+})();
+</script>
+</body>
+</html>
