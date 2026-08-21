@@ -1,0 +1,145 @@
+{
+  "public_https_base_url": {
+    "description": "登录页公网 HTTPS 地址",
+    "type": "string",
+    "default": "",
+    "hint": "留空时禁用网页登录；必须为 https:// 地址，不会根据 Host 自动推断。"
+  },
+  "extra_command_roots": {
+    "description": "额外命令入口",
+    "type": "list",
+    "default": [],
+    "hint": "例如 /ww；/kh 永久保留，无需填写。"
+  },
+  "keyword_help": {
+    "description": "帮助关键词",
+    "type": "list",
+    "default": ["kh帮助", "鸣潮帮助"],
+    "hint": "去除首尾空白后精确匹配。"
+  },
+  "keyword_login": {
+    "description": "登录关键词",
+    "type": "list",
+    "default": ["kh登录", "鸣潮登录"],
+    "hint": "去除首尾空白后精确匹配。"
+  },
+  "keyword_account": {
+    "description": "账号关键词",
+    "type": "list",
+    "default": ["kh账号", "鸣潮账号"],
+    "hint": "去除首尾空白后精确匹配。"
+  },
+  "keyword_character": {
+    "description": "角色关键词",
+    "type": "list",
+    "default": ["kh角色", "鸣潮角色"],
+    "hint": "支持角色参数、x页分页和查询对象前后置。"
+  },
+  "keyword_progress": {
+    "description": "练度关键词",
+    "type": "list",
+    "default": ["kh练度", "鸣潮练度"],
+    "hint": "支持查询对象前后置。"
+  },
+  "allow_query_others": {
+    "description": "允许查询其他 QQ",
+    "type": "bool",
+    "default": false,
+    "hint": "全局开关；仅开放角色列表、角色详情和练度的当前缓存。"
+  },
+  "character_page_size": {
+    "description": "角色列表每页数量",
+    "type": "int",
+    "default": 12,
+    "hint": "范围 1 到 30。"
+  },
+  "login_link_ttl_minutes": {
+    "description": "登录链接有效分钟数",
+    "type": "int",
+    "default": 5,
+    "hint": "范围 1 到 30。"
+  },
+  "confirm_ttl_minutes": {
+    "description": "确认码有效分钟数",
+    "type": "int",
+    "default": 5,
+    "hint": "范围 1 到 30。"
+  },
+  "confirm_max_attempts": {
+    "description": "确认码最大错误次数",
+    "type": "int",
+    "default": 5,
+    "hint": "范围 1 到 10。"
+  },
+  "login_rate_window_minutes": {
+    "description": "网页登录限流窗口分钟数",
+    "type": "int",
+    "default": 10,
+    "hint": "范围 1 到 60。"
+  },
+  "login_session_max_attempts": {
+    "description": "单次登录会话最大失败次数",
+    "type": "int",
+    "default": 5,
+    "hint": "范围 1 到 20。"
+  },
+  "login_email_max_attempts": {
+    "description": "同一邮箱限流窗口最大失败次数",
+    "type": "int",
+    "default": 8,
+    "hint": "范围 1 到 30；邮箱仅以 HMAC 参与限流。"
+  },
+  "login_ip_max_attempts": {
+    "description": "同一来源 IP 限流窗口最大失败次数",
+    "type": "int",
+    "default": 20,
+    "hint": "范围 1 到 100；来源 IP 仅以 HMAC 参与限流。"
+  },
+  "login_freeze_minutes": {
+    "description": "网页登录触发限流后的冻结分钟数",
+    "type": "int",
+    "default": 15,
+    "hint": "范围 1 到 120。"
+  },
+  "auto_sync_enabled": {
+    "description": "启用后台自动同步",
+    "type": "bool",
+    "default": false
+  },
+  "auto_sync_interval_hours": {
+    "description": "自动同步间隔小时数",
+    "type": "int",
+    "default": 12,
+    "hint": "最小 6 小时。"
+  },
+  "sync_concurrency": {
+    "description": "账号同步并发上限",
+    "type": "int",
+    "default": 2,
+    "hint": "范围 1 到 10。"
+  },
+  "role_detail_concurrency": {
+    "description": "角色详情请求并发上限",
+    "type": "int",
+    "default": 2,
+    "hint": "范围 1 到 5。"
+  },
+  "request_timeout_seconds": {
+    "description": "上游请求超时秒数",
+    "type": "int",
+    "default": 20,
+    "hint": "范围 5 到 120。"
+  },
+  "render_timeout_seconds": {
+    "description": "图片卡渲染超时秒数",
+    "type": "int",
+    "default": 30,
+    "hint": "范围 5 到 120；超时后自动降级为文本。"
+  },
+  "admin_audit_retention_days": {
+    "description": "管理审计保留天数",
+    "type": "int",
+    "default": 30,
+    "hint": "范围 0 到 365；0 表示关闭。"
+  }
+}
