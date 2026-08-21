@@ -11,7 +11,7 @@ from pathlib import Path
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from constants import MASTER_KEY_ENV, PLUGIN_NAME
+from ..constants import MASTER_KEY_ENV, PLUGIN_NAME
 
 _KEY_BYTES = 32
 _NONCE_BYTES = 12

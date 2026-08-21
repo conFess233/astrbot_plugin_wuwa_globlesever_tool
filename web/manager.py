@@ -6,12 +6,12 @@ from typing import Any
 
 from astrbot.api.web import error_response, file_response, json_response, request
 
-from constants import PLUGIN_NAME, PLUGIN_VERSION
-from infrastructure.database import Database
-from infrastructure.http import HttpClient
-from infrastructure.paths import RuntimePaths
-from services.login_sessions import LoginSessionError, LoginSessionService
-from services.settings import PluginSettings
+from ..constants import PLUGIN_NAME, PLUGIN_VERSION
+from ..infrastructure.database import Database
+from ..infrastructure.http import HttpClient
+from ..infrastructure.paths import RuntimePaths
+from ..services.login_sessions import LoginSessionError, LoginSessionService
+from ..services.settings import PluginSettings
 
 _LOGIN_PAGE = Path(__file__).with_name("static") / "login.html"
 

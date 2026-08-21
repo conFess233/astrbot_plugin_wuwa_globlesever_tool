@@ -9,13 +9,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from constants import PLUGIN_VERSION, SCHEMA_VERSION
-from infrastructure.card_cache import remove_profile_cards
-from infrastructure.crypto import TokenCipher
-from infrastructure.database import Database
-from infrastructure.paths import RuntimePaths
-from services.catalog import CharacterCatalog
-from services.settings import PluginSettings
+from ..constants import PLUGIN_VERSION, SCHEMA_VERSION
+from ..infrastructure.card_cache import remove_profile_cards
+from ..infrastructure.crypto import TokenCipher
+from ..infrastructure.database import Database
+from ..infrastructure.paths import RuntimePaths
+from .catalog import CharacterCatalog
+from .settings import PluginSettings
 
 _CATALOG_URL = "https://guide-server.aki-game.net/role/avatar/list"
 _MAX_CATALOG_BYTES = 4 * 1024 * 1024

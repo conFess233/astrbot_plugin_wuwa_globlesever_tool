@@ -8,30 +8,30 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
 
-from clients.auth import GlobalAuthClient
-from clients.guide import GlobalGuideClient
-from commands.event_adapter import mentioned_users, plain_text
-from commands.parser import CommandParseError, CommandParser
-from constants import PLUGIN_DISPLAY_NAME, PLUGIN_NAME, PLUGIN_VERSION
-from domain.cards import CardMessage
-from domain.login import LoginLinkMessage
-from infrastructure.crypto import MasterKeyProvider, TokenCipher
-from infrastructure.database import Database
-from infrastructure.http import HttpClient
-from infrastructure.paths import RuntimePaths
-from repositories.accounts import AccountError, AccountRepository
-from repositories.local_data import LocalDataError, LocalDataRepository
-from services.backups import BackupService
-from services.cards import AstrBotCardRenderer, CardService
-from services.catalog import CatalogError, CharacterCatalog
-from services.command_service import CommandService, CommandServiceError
-from services.dashboard import DashboardService
-from services.login_sessions import LoginSessionError, LoginSessionService
-from services.resource_cache import StaticImageCache
-from services.settings import PluginSettings
-from services.sync import GuideSyncService, SyncError
-from web.dashboard import DashboardWebManager
-from web.manager import WebManager
+from .clients.auth import GlobalAuthClient
+from .clients.guide import GlobalGuideClient
+from .commands.event_adapter import mentioned_users, plain_text
+from .commands.parser import CommandParseError, CommandParser
+from .constants import PLUGIN_DISPLAY_NAME, PLUGIN_NAME, PLUGIN_VERSION
+from .domain.cards import CardMessage
+from .domain.login import LoginLinkMessage
+from .infrastructure.crypto import MasterKeyProvider, TokenCipher
+from .infrastructure.database import Database
+from .infrastructure.http import HttpClient
+from .infrastructure.paths import RuntimePaths
+from .repositories.accounts import AccountError, AccountRepository
+from .repositories.local_data import LocalDataError, LocalDataRepository
+from .services.backups import BackupService
+from .services.cards import AstrBotCardRenderer, CardService
+from .services.catalog import CatalogError, CharacterCatalog
+from .services.command_service import CommandService, CommandServiceError
+from .services.dashboard import DashboardService
+from .services.login_sessions import LoginSessionError, LoginSessionService
+from .services.resource_cache import StaticImageCache
+from .services.settings import PluginSettings
+from .services.sync import GuideSyncService, SyncError
+from .web.dashboard import DashboardWebManager
+from .web.manager import WebManager
 
 _HANDLED_EVENT_KEY = "wuwa_global_server_tool_handled"
 

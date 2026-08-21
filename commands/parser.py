@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
-from services.settings import PluginSettings
+from ..services.settings import PluginSettings
 
 _SPACE = re.compile(r"\s+")
 _PAGE = re.compile(r"^(\d+)页$")

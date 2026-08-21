@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TypeVar
 
-from domain.sync import (
+from ..domain.sync import (
     GuideAuthenticationError,
     GuideAvatar,
     GuideError,
@@ -20,10 +20,10 @@ from domain.sync import (
     SyncedCharacter,
     SyncResult,
 )
-from infrastructure.crypto import CryptoError, TokenCipher
-from infrastructure.database import Database
-from services.catalog import CatalogError, CharacterCatalog
-from services.settings import PluginSettings
+from ..infrastructure.crypto import CryptoError, TokenCipher
+from ..infrastructure.database import Database
+from .catalog import CatalogError, CharacterCatalog
+from .settings import PluginSettings
 
 _T = TypeVar("_T")
 _LANGUAGE_MAP = {

@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
 
-from domain.cards import (
+from ..domain.cards import (
     CardCharacter,
     CardMessage,
     CardViewModel,
@@ -18,9 +18,9 @@ from domain.cards import (
     CharacterListCard,
     ProgressCard,
 )
-from repositories.local_data import CharacterRecord, ProfileSelection
-from services.catalog import CharacterCatalog
-from services.resource_cache import StaticImageCache
+from ..repositories.local_data import CharacterRecord, ProfileSelection
+from .catalog import CharacterCatalog
+from .resource_cache import StaticImageCache
 
 logger = logging.getLogger(__name__)
 

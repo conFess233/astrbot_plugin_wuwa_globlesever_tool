@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 
 import aiohttp
 
-from domain.sync import (
+from ..domain.sync import (
     GuideAuthenticationError,
     GuideAvatar,
     GuideError,
@@ -16,7 +16,7 @@ from domain.sync import (
     GuideSyncPlayer,
     GuideUnavailableError,
 )
-from infrastructure.http import HttpClient
+from ..infrastructure.http import HttpClient
 
 _BASES = ("https://guide-server.aki-game.net", "https://guide-server-1.aki-game.net")
 _MAX_RESPONSE_BYTES = 4 * 1024 * 1024

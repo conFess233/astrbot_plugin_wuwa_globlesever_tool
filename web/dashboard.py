@@ -18,9 +18,9 @@ from astrbot.api.web import (
     request,
 )
 
-from services.backups import BackupError, BackupService
-from services.dashboard import DashboardError, DashboardService
-from services.settings import SettingsError
+from ..services.backups import BackupError, BackupService
+from ..services.dashboard import DashboardError, DashboardService
+from ..services.settings import SettingsError
 
 DashboardGetter = Callable[[], DashboardService | None]
 BackupGetter = Callable[[], BackupService | None]

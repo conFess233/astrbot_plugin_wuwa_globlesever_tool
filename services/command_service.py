@@ -2,16 +2,16 @@
 
 import math
 
-from commands.parser import CommandName, ParsedCommand
-from domain.cards import CardMessage
-from domain.login import LoginLinkMessage
-from repositories.accounts import AccountRepository
-from repositories.local_data import CharacterRecord, LocalDataRepository
-from services.cards import CardService
-from services.catalog import CharacterCatalog
-from services.login_sessions import LoginSessionService
-from services.settings import PluginSettings
-from services.sync import GuideSyncService, SyncError
+from ..commands.parser import CommandName, ParsedCommand
+from ..domain.cards import CardMessage
+from ..domain.login import LoginLinkMessage
+from ..repositories.accounts import AccountRepository
+from ..repositories.local_data import CharacterRecord, LocalDataRepository
+from .cards import CardService
+from .catalog import CharacterCatalog
+from .login_sessions import LoginSessionService
+from .settings import PluginSettings
+from .sync import GuideSyncService, SyncError
 
 
 class CommandServiceError(ValueError):

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
-from constants import SCHEMA_VERSION
+from ..constants import SCHEMA_VERSION
 
 _T = TypeVar("_T")
 

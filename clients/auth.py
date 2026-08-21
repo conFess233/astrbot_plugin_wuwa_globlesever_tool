@@ -7,8 +7,7 @@ from typing import Any
 
 import aiohttp
 
-from clients.sdk_crypto import SdkEncodingError, encode_password, generate_signature
-from domain.login import (
+from ..domain.login import (
     AuthenticatedAccount,
     AuthenticationError,
     AuthenticationUnavailableError,
@@ -16,7 +15,8 @@ from domain.login import (
     GuidePlayer,
     SdkLoginResult,
 )
-from infrastructure.http import HttpClient
+from ..infrastructure.http import HttpClient
+from .sdk_crypto import SdkEncodingError, encode_password, generate_signature
 
 _SDK_BASE = "https://sdkapi.kurogame-service.com"
 _GUIDE_BASES = (

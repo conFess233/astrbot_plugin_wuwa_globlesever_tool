@@ -13,12 +13,12 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from constants import PLUGIN_NAME, PLUGIN_VERSION, SCHEMA_VERSION
-from infrastructure.crypto import CryptoError, TokenCipher
-from infrastructure.database import Database
-from infrastructure.paths import RuntimePaths
-from services.catalog import CharacterCatalog
-from services.settings import PluginSettings
+from ..constants import PLUGIN_NAME, PLUGIN_VERSION, SCHEMA_VERSION
+from ..infrastructure.crypto import CryptoError, TokenCipher
+from ..infrastructure.database import Database
+from ..infrastructure.paths import RuntimePaths
+from .catalog import CharacterCatalog
+from .settings import PluginSettings
 
 _MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 _MAX_ENTRY_BYTES = 96 * 1024 * 1024

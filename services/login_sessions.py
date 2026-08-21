@@ -9,8 +9,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
-from constants import PLUGIN_NAME
-from domain.login import (
+from ..constants import PLUGIN_NAME
+from ..domain.login import (
     AuthClient,
     AuthenticationError,
     AuthenticationUnavailableError,
@@ -21,9 +21,9 @@ from domain.login import (
     LoginSelectionResult,
     LoginSubmitResult,
 )
-from infrastructure.crypto import CryptoError, TokenCipher
-from infrastructure.database import Database
-from services.settings import PluginSettings
+from ..infrastructure.crypto import CryptoError, TokenCipher
+from ..infrastructure.database import Database
+from .settings import PluginSettings
 
 _EMAIL = re.compile(r"^[^\s@]{1,128}@[^\s@]{1,190}$")
 _GEETEST_KEYS = {"captcha_output", "gen_time", "lot_number", "pass_token"}

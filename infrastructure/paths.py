@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from constants import PLUGIN_NAME
+from ..constants import PLUGIN_NAME
 
 
 @dataclass(frozen=True, slots=True)
