@@ -6,67 +6,127 @@
   <meta name="color-scheme" content="light dark">
   <title>鸣潮国际服账号登录</title>
   <style>
-    :root { font-family: Inter, "Microsoft YaHei", sans-serif; color-scheme: dark; }
+    :root {
+      color-scheme: light;
+      --primary: #7367f0;
+      --primary-soft: #edeafd;
+      --primary-hover: #685dd8;
+      --warning: #ff9f43;
+      --warning-soft: #fff2e2;
+      --info: #00bad1;
+      --info-soft: #e0f7fa;
+      --page: #f7f7f9;
+      --surface: #ffffff;
+      --surface-raised: #ffffff;
+      --text: #2f2b3d;
+      --muted: #6d6b77;
+      --border: #e6e5e8;
+      --shadow-sm: 0 2px 8px rgba(47, 43, 61, .08);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px;
-      background: radial-gradient(circle at top, #204b55 0, #101719 42%, #090d0e 100%); color: #edf7f5; }
-    main { width: min(100%, 620px); border: 1px solid #6ee7d833; border-radius: 22px; padding: 30px;
-      background: #10191bdd; box-shadow: 0 24px 80px #0009; backdrop-filter: blur(18px); }
-    .brand { color: #6ee7d8; font-size: 13px; letter-spacing: .16em; text-transform: uppercase; }
-    h1 { margin: 8px 0 10px; font-size: clamp(25px, 6vw, 38px); }
-    .lead { margin: 0 0 26px; color: #b5c8c5; line-height: 1.65; }
-    label { display: grid; gap: 8px; margin: 16px 0; color: #d9e8e5; }
-    input[type="email"], input[type="password"] { width: 100%; border: 1px solid #8ca7a244; border-radius: 12px;
-      background: #071011; color: inherit; padding: 13px 14px; font: inherit; outline: none; }
-    input:focus { border-color: #6ee7d8; box-shadow: 0 0 0 3px #6ee7d822; }
-    button { border: 0; border-radius: 12px; padding: 13px 18px; font: 650 15px inherit; cursor: pointer;
-      background: linear-gradient(135deg, #6ee7d8, #52b7d8); color: #071011; }
-    button:disabled { cursor: wait; opacity: .55; }
-    .status { min-height: 24px; margin: 14px 0 0; color: #ffd28d; line-height: 1.5; }
+    html { min-width: 320px; background: var(--page); }
+    body { margin: 0; min-height: 100vh; padding: 48px 20px; background: var(--page); color: var(--text); font-size: 14px; line-height: 1.5; }
+    button, input { font: inherit; }
+    button, label, input[type="checkbox"], input[type="radio"] { cursor: pointer; }
+    .auth-shell { width: min(100%, 620px); margin: 0 auto; }
+    .page-header { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+    .brand-icon { display: grid; flex: 0 0 46px; width: 46px; height: 46px; place-items: center; border-radius: 12px; background: var(--primary-soft); color: var(--primary); }
+    .brand-icon svg { width: 25px; height: 25px; }
+    .line-icon { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    h1 { margin: 0 0 2px; font-size: 25px; line-height: 1.25; letter-spacing: -.02em; }
+    .page-subtitle { margin: 0; color: var(--muted); font-size: 13px; }
+    .section-card { padding: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-sm); }
+    .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+    .eyebrow { display: block; margin-bottom: 4px; color: var(--primary); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+    h2 { margin: 0; font-size: 18px; line-height: 1.35; }
+    .lead { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+    .section-icon { display: grid; flex: 0 0 42px; width: 42px; height: 42px; place-items: center; border-radius: 10px; background: var(--primary-soft); color: var(--primary); }
+    .section-icon svg { width: 21px; height: 21px; }
+    form { margin: 0; }
+    .field { display: grid; gap: 7px; margin: 0 0 16px; color: var(--muted); font-size: 12px; font-weight: 600; }
+    input[type="email"], input[type="password"] { width: 100%; min-height: 42px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 7px; outline: 0; background: var(--surface-raised); color: var(--text); cursor: text; transition: border-color .18s ease, box-shadow .18s ease; }
+    input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+    input[type="checkbox"], input[type="radio"] { width: 17px; height: 17px; margin: 0; accent-color: var(--primary); }
+    .btn { display: inline-flex; width: 100%; min-height: 42px; align-items: center; justify-content: center; gap: 7px; padding: 9px 15px; border: 1px solid transparent; border-radius: 8px; background: var(--primary); color: #fff; font-weight: 600; line-height: 1; box-shadow: 0 3px 8px rgba(115, 103, 240, .28); transition: background-color .18s ease, box-shadow .18s ease, transform .18s ease; }
+    .btn:hover:not(:disabled) { background: var(--primary-hover); transform: translateY(-1px); }
+    .btn:disabled { cursor: wait; opacity: .55; }
+    .status { min-height: 0; margin: 16px 0 0; padding: 11px 13px; border: 1px solid rgba(255, 159, 67, .28); border-radius: 9px; background: var(--warning-soft); color: var(--text); line-height: 1.5; }
+    .status:empty { display: none; }
     .hidden { display: none !important; }
-    .players { display: grid; gap: 10px; margin: 20px 0; }
-    .player { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center;
-      margin: 0; padding: 14px; border: 1px solid #8ca7a233; border-radius: 13px; background: #07101188; }
-    .player strong, .player small { display: block; }
-    .player small { color: #9eb3af; margin-top: 4px; }
-    .default { display: flex; gap: 6px; align-items: center; margin: 0; font-size: 13px; color: #b7cbc7; }
-    .code { margin: 22px 0; padding: 22px; border-radius: 16px; text-align: center; background: #6ee7d812;
-      border: 1px solid #6ee7d844; font: 700 clamp(32px, 10vw, 52px) ui-monospace, monospace; letter-spacing: .15em; }
-    .foot { margin-top: 24px; padding-top: 18px; border-top: 1px solid #ffffff12; color: #819793; font-size: 13px; line-height: 1.6; }
+    .players { display: grid; gap: 10px; margin: 18px 0; }
+    .player { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; margin: 0; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); transition: border-color .18s ease, box-shadow .18s ease; }
+    .player:hover { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+    .player span { min-width: 0; }
+    .player strong, .player small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .player small { margin-top: 3px; color: var(--muted); font-size: 11px; }
+    .default { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); font-size: 12px; font-weight: 600; }
+    .code { margin: 20px 0; padding: 20px 12px; border: 1px solid rgba(115, 103, 240, .28); border-radius: 10px; background: var(--primary-soft); color: var(--primary); text-align: center; font: 700 clamp(30px, 10vw, 48px) ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .14em; }
+    .security-note { display: flex; align-items: flex-start; gap: 11px; margin-top: 16px; padding: 13px 14px; border: 1px solid rgba(0, 186, 209, .28); border-radius: 10px; background: var(--info-soft); }
+    .security-note svg { flex: 0 0 19px; width: 19px; margin-top: 1px; color: var(--info); }
+    .security-note p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .security-note strong { color: var(--text); }
+    @media (prefers-color-scheme: dark) {
+      :root { color-scheme: dark; --primary-soft: rgba(115, 103, 240, .18); --warning-soft: rgba(255, 159, 67, .16); --info-soft: rgba(0, 186, 209, .16); --page: #25293c; --surface: #2f3349; --surface-raised: #363a50; --text: #e7e3fc; --muted: #b6b3c2; --border: #44485f; --shadow-sm: 0 2px 10px rgba(12, 14, 22, .22); }
+    }
+    @media (max-width: 560px) {
+      body { padding: 22px 12px; }
+      .page-header { gap: 10px; margin-bottom: 16px; }
+      .brand-icon { flex-basis: 40px; width: 40px; height: 40px; }
+      h1 { font-size: 20px; }
+      .section-card { padding: 18px 16px; }
+      .section-heading { margin-bottom: 18px; }
+      .section-icon { display: none; }
+      .player { grid-template-columns: auto minmax(0, 1fr); }
+      .default { grid-column: 2; }
+    }
   </style>
 </head>
 <body>
-<main>
-  <div class="brand">Wuthering Waves · Global</div>
-  <h1>绑定国际服账号</h1>
-  <p class="lead" id="lead">凭据仅用于本次登录，不会保存密码。完成网页步骤后，还需回到发起登录的 QQ 会话确认。</p>
+<main class="auth-shell">
+  <header class="page-header">
+    <span class="brand-icon" aria-hidden="true">
+      <svg class="line-icon" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"></path></svg>
+    </span>
+    <div><h1>鸣潮国际服数据工具</h1><p class="page-subtitle">安全绑定国际服账号</p></div>
+  </header>
 
-  <section id="login-stage">
-    <form id="login-form">
-      <label>国际服邮箱<input id="email" type="email" autocomplete="username" maxlength="320" required></label>
-      <label>密码<input id="password" type="password" autocomplete="current-password" maxlength="256" required></label>
-      <div id="captcha"></div>
-      <button id="login-button" type="submit">登录并读取 UID</button>
-    </form>
-  </section>
+  <article class="section-card">
+    <div class="section-heading">
+      <div><span class="eyebrow">Wuthering Waves · Global</span><h2>绑定国际服账号</h2><p class="lead" id="lead">凭据仅用于本次登录，不会保存密码。完成网页步骤后，还需回到发起登录的 QQ 会话确认。</p></div>
+      <span class="section-icon" aria-hidden="true"><svg class="line-icon" viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5zM12 15v2"></path></svg></span>
+    </div>
 
-  <section id="select-stage" class="hidden">
-    <h2>选择要绑定的 UID</h2>
-    <p class="lead">至少选择一个，并指定一个默认 UID。未选择的已有绑定不会被删除。</p>
-    <form id="select-form">
-      <div id="players" class="players"></div>
-      <button id="select-button" type="submit">生成 QQ 确认码</button>
-    </form>
-  </section>
+    <section id="login-stage">
+      <form id="login-form">
+        <label class="field"><span>国际服邮箱</span><input id="email" type="email" autocomplete="username" maxlength="320" placeholder="name@example.com" required></label>
+        <label class="field"><span>密码</span><input id="password" type="password" autocomplete="current-password" maxlength="256" placeholder="请输入账号密码" required></label>
+        <div id="captcha"></div>
+        <button id="login-button" class="btn" type="submit">登录并读取 UID</button>
+      </form>
+    </section>
 
-  <section id="confirm-stage" class="hidden">
-    <h2>回到 QQ 完成确认</h2>
-    <div id="confirmation-code" class="code"></div>
-    <p class="lead">在原 QQ 会话发送：<strong>/kh 登录确认 上方确认码</strong></p>
-  </section>
+    <section id="select-stage" class="hidden">
+      <div class="section-heading"><div><span class="eyebrow">账号角色</span><h2>选择要绑定的 UID</h2><p class="lead">至少选择一个，并指定一个默认 UID。未选择的已有绑定不会被删除。</p></div></div>
+      <form id="select-form">
+        <div id="players" class="players"></div>
+        <button id="select-button" class="btn" type="submit">生成 QQ 确认码</button>
+      </form>
+    </section>
 
-  <p id="status" class="status" role="status" aria-live="polite"></p>
-  <div class="foot">不要把登录链接、验证码或页面内容转发给他人。关闭页面会清除浏览器内的临时会话。</div>
+    <section id="confirm-stage" class="hidden">
+      <div class="section-heading"><div><span class="eyebrow">最后一步</span><h2>回到 QQ 完成确认</h2></div></div>
+      <div id="confirmation-code" class="code"></div>
+      <p class="lead">在原 QQ 会话发送：<strong>/kh 登录确认 上方确认码</strong></p>
+    </section>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+  </article>
+
+  <aside class="security-note">
+    <svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5m0-9h.01"></path></svg>
+    <p><strong>安全提醒：</strong>不要把登录链接、验证码或页面内容转发给他人。关闭页面会清除浏览器内的临时会话。</p>
+  </aside>
 </main>
 <script>
 (() => {
