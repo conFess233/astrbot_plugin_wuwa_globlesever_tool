@@ -17,6 +17,9 @@ class SettingsError(ValueError):
 @dataclass(frozen=True, slots=True)
 class PluginSettings:
     public_https_base_url: str
+    login_server_host: str
+    login_server_port: int
+    login_trust_proxy_headers: bool
     extra_command_roots: tuple[str, ...]
     keyword_help: tuple[str, ...]
     keyword_login: tuple[str, ...]
@@ -46,8 +49,18 @@ class PluginSettings:
         public_url = str(values.get("public_https_base_url") or "").strip().rstrip("/")
         if public_url:
             parsed = urlparse(public_url)
-            if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment:
-                raise SettingsError("登录页公网地址必须是不含查询参数的 HTTPS 地址")
+            if (
+                parsed.scheme != "https"
+                or not parsed.netloc
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise SettingsError("登录页公网地址必须是不含路径或查询参数的 HTTPS 根地址")
+
+        login_server_host = str(values.get("login_server_host") or "127.0.0.1").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,253}", login_server_host):
+            raise SettingsError("登录监听地址格式无效")
 
         roots = tuple(
             root
@@ -56,6 +69,9 @@ class PluginSettings:
         )
         return cls(
             public_https_base_url=public_url,
+            login_server_host=login_server_host,
+            login_server_port=cls._bounded_int(values, "login_server_port", 6199, 1024, 65535),
+            login_trust_proxy_headers=bool(values.get("login_trust_proxy_headers", True)),
             extra_command_roots=roots,
             keyword_help=cls._keywords(values, "keyword_help", ("kh帮助", "鸣潮帮助")),
             keyword_login=cls._keywords(values, "keyword_login", ("kh登录", "鸣潮登录")),

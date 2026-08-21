@@ -244,9 +244,20 @@ class DashboardService:
         mutable = self.config
         if not hasattr(mutable, "update"):
             raise DashboardError("当前 AstrBot 配置对象不可写")
-        mutable.update({key: _json_value(getattr(validated, key)) for key in _EDITABLE_CONFIG_KEYS})
-        await self.persist_config()
+        previous = self.settings
+        previous_values = {
+            key: _json_value(getattr(previous, key)) for key in _EDITABLE_CONFIG_KEYS
+        }
         await self.apply_settings(validated)
+        try:
+            mutable.update(
+                {key: _json_value(getattr(validated, key)) for key in _EDITABLE_CONFIG_KEYS}
+            )
+            await self.persist_config()
+        except Exception:
+            mutable.update(previous_values)
+            await self.apply_settings(previous)
+            raise
         self.settings = validated
         await self.database.write(
             lambda db: self._audit(db, admin, "save_config", "global", "success")

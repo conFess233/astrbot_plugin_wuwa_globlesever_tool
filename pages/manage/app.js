@@ -28,7 +28,10 @@ const ICONS = {
 
 const CONFIG = [
   ["入口与查询", "dashboard", [
-    ["public_https_base_url", "登录页公网 HTTPS 地址", "text", "留空时无法生成外部登录链接"],
+    ["public_https_base_url", "登录页公网 HTTPS 地址", "text", "Cloudflare 域名；反向代理到独立登录端口，不是 Dashboard"],
+    ["login_server_host", "独立登录监听地址", "text", "同机 Cloudflare Tunnel 保持 127.0.0.1"],
+    ["login_server_port", "独立登录监听端口", "number", "默认 6199；Cloudflare Service 指向此端口"],
+    ["login_trust_proxy_headers", "信任代理来源 IP", "bool", "同机 Cloudflare Tunnel 开启；直接开放端口时关闭"],
     ["extra_command_roots", "额外命令入口", "list", "逗号分隔；永久兼容入口 /kh 不受影响"],
     ["allow_query_others", "允许查询他人", "bool", "启用后可通过 @用户 查询角色与练度"],
     ["character_page_size", "角色列表每页数量", "number", "允许 1–20"],

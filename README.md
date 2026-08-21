@@ -39,7 +39,7 @@
 - AstrBot `>=4.24.2,<5`
 - QQ / OneBot 11（`aiocqhttp`）消息平台
 - 可供 AstrBot 安装依赖的 Python 环境
-- 邮箱登录另需一个反向代理到 AstrBot 的公网 HTTPS 域名
+- 邮箱登录另需一个反向代理到插件独立登录端口的公网 HTTPS 域名
 
 ### 管理员安装
 
@@ -48,9 +48,27 @@
 在 AstrBot Dashboard 的插件配置中：
 
 1. 如需邮箱登录，将 `public_https_base_url` 设置为实际可访问的 HTTPS 根地址，例如 `https://bot.example.com`。
-2. 确认反向代理允许访问 AstrBot 注册的插件 Web API。
+2. 插件默认在 `127.0.0.1:6199` 启动独立登录服务；将反向代理上游指向该端口，不能指向 AstrBot Dashboard 的 `6185` 端口。
 3. 按需开启 `allow_query_others`；默认关闭他人查询。
 4. 需要后台定期刷新时再开启 `auto_sync_enabled`。
+
+#### Cloudflare Tunnel
+
+使用同一服务器上的 Cloudflare Tunnel 时，插件配置保持：
+
+```text
+login_server_host = 127.0.0.1
+login_server_port = 6199
+login_trust_proxy_headers = true
+```
+
+在 Cloudflare Tunnel 的 Public Hostname 中把 Service 设置为：
+
+```text
+http://127.0.0.1:6199
+```
+
+保存后重载插件，再重新发送 `/kh 登录` 获取新链接。不要把 Tunnel 指向 `http://127.0.0.1:6185`；`6185` 是受 Dashboard/API Key 保护的 AstrBot 管理入口，匿名访问会返回 `Missing API key`。
 
 <details>
 <summary>手动安装</summary>
@@ -168,6 +186,9 @@ AstrBot 管理员可从插件管理页进入本插件的 Dashboard 页面。页�
 | 配置项                  | 默认值             | 范围 / 说明                               |
 | ----------------------- | ------------------ | ----------------------------------------- |
 | `public_https_base_url` | 空                 | 公网 HTTPS 根地址；留空仅禁用网页邮箱登录 |
+| `login_server_host`     | `127.0.0.1`        | 独立登录服务监听地址                      |
+| `login_server_port`     | `6199`             | 独立登录服务端口，`1024-65535`            |
+| `login_trust_proxy_headers` | `true`         | 是否信任 Cloudflare 等反向代理的来源 IP   |
 | `extra_command_roots`   | `[]`               | 额外正式入口，如 `/ww`；`/kh` 永久保留    |
 | `keyword_help`          | `kh帮助, 鸣潮帮助` | 帮助关键词列表                            |
 | `keyword_login`         | `kh登录, 鸣潮登录` | 登录关键词列表                            |

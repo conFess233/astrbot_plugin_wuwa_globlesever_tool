@@ -32,6 +32,7 @@ from .services.settings import PluginSettings
 from .services.sync import GuideSyncService, SyncError
 from .web.dashboard import DashboardWebManager
 from .web.manager import WebManager
+from .web.public_login import PublicLoginServer
 
 _HANDLED_EVENT_KEY = "wuwa_global_server_tool_handled"
 
@@ -68,6 +69,7 @@ class WuWaGlobalServerPlugin(Star):
             self.settings,
             lambda: self.login_sessions,
         )
+        self.public_login = PublicLoginServer(self.settings, lambda: self.login_sessions)
         self.dashboard_web = DashboardWebManager(
             lambda: self.dashboard_service,
             lambda: self.backup_service,
@@ -82,20 +84,6 @@ class WuWaGlobalServerPlugin(Star):
             ["GET"],
             "鸣潮国际服数据工具运行状态",
         )
-        routes = (
-            ("login/session", self.web.login_session_page, ["GET"], "国际服登录会话页"),
-            ("login/<link_token>", self.web.login_page, ["GET"], "国际服临时登录页"),
-            ("login/exchange", self.web.login_exchange, ["POST"], "兑换临时登录链接"),
-            ("login/submit", self.web.login_submit, ["POST"], "提交国际服登录"),
-            ("login/select", self.web.login_select, ["POST"], "选择国际服 UID"),
-        )
-        for route, handler, methods, description in routes:
-            self.context.register_web_api(
-                f"/{PLUGIN_NAME}/{route}",
-                handler,
-                methods,
-                description,
-            )
         dashboard_routes = (
             ("dashboard/overview", self.dashboard_web.overview, ["GET"], "后台运行概览"),
             ("dashboard/accounts", self.dashboard_web.accounts, ["GET"], "后台账号列表"),
@@ -211,6 +199,14 @@ class WuWaGlobalServerPlugin(Star):
             self._fetch_catalog,
             lambda: bool(self.sync_service is not None and self.sync_service.auto_sync_running),
         )
+        await self.public_login.start()
+        if self.public_login.running:
+            logger.info(
+                "%s：独立登录服务已监听 http://%s:%s",
+                PLUGIN_DISPLAY_NAME,
+                self.settings.login_server_host,
+                self.settings.login_server_port,
+            )
         self.sync_service.start_auto_sync()
         self._initialized = True
         logger.info("%s：本地档案与国际服登录服务初始化完成", PLUGIN_DISPLAY_NAME)
@@ -319,6 +315,7 @@ class WuWaGlobalServerPlugin(Star):
         self.config.save_config()
 
     async def _apply_settings(self, settings: PluginSettings) -> None:
+        await self.public_login.update_settings(settings)
         await self.http.update_timeout(settings.request_timeout_seconds)
         self.settings = settings
         self.parser.update_settings(settings)
@@ -384,6 +381,7 @@ class WuWaGlobalServerPlugin(Star):
 
     async def terminate(self) -> None:
         self._initialized = False
+        await self.public_login.close()
         await self.dashboard_web.close()
         if self.sync_service is not None:
             await self.sync_service.close()

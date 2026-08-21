@@ -3,7 +3,25 @@
     "description": "登录页公网 HTTPS 地址",
     "type": "string",
     "default": "",
-    "hint": "留空时禁用网页登录；必须为 https:// 地址，不会根据 Host 自动推断。"
+    "hint": "留空时禁用网页登录；必须为 https:// 地址。反向代理应指向下方独立登录监听端口，而不是 AstrBot Dashboard。"
+  },
+  "login_server_host": {
+    "description": "独立登录服务监听地址",
+    "type": "string",
+    "default": "127.0.0.1",
+    "hint": "Cloudflare Tunnel 与 AstrBot 位于同一主机时保持 127.0.0.1；只有需要直接跨主机访问时才使用 0.0.0.0。"
+  },
+  "login_server_port": {
+    "description": "独立登录服务监听端口",
+    "type": "int",
+    "default": 6199,
+    "hint": "范围 1024 到 65535；Cloudflare Tunnel 的 Service 应指向 http://127.0.0.1:6199。"
+  },
+  "login_trust_proxy_headers": {
+    "description": "信任反向代理来源 IP 请求头",
+    "type": "bool",
+    "default": true,
+    "hint": "使用同机 Cloudflare Tunnel 时开启，以 CF-Connecting-IP 参与限流；直接开放端口时应关闭。"
   },
   "extra_command_roots": {
     "description": "额外命令入口",

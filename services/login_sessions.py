@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
-from ..constants import PLUGIN_NAME
+from ..constants import PUBLIC_LOGIN_PREFIX
 from ..domain.login import (
     AuthClient,
     AuthenticationError,
@@ -80,7 +80,7 @@ class LoginSessionService:
 
         await self.database.write(operation)
         base = self.settings.public_https_base_url
-        path = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/login/{quote(link_token)}"
+        path = f"{PUBLIC_LOGIN_PREFIX}/login/{quote(link_token)}"
         return LoginLinkMessage(f"{base}{path}", self.settings.login_link_ttl_minutes)
 
     async def validate_link(self, link_token: str) -> bool:
