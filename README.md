@@ -1,14 +1,262 @@
-# astrbot-plugin-helloworld
+<div align="center">
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+# 鸣潮国际服数据工具
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+鸣潮国际服账号绑定、角色同步、本地档案和图片查询插件
 
-# Supports
+[![Version](https://img.shields.io/badge/version-0.5.0-blue)](CHANGELOG.md)
+[![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.24.2%20%3C5-6f42c1)](https://github.com/AstrBotDevs/AstrBot)
+[![Platform](https://img.shields.io/badge/OneBot_11-QQ-12b7f5)](https://github.com/botuniverse/onebot-11)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-green)](LICENSE)
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+[功能](#功能概览) · [安装](#快速开始) · [命令](#命令说明) · [配置](#完整配置) · [安全](#安全与隐私) · [更新日志](CHANGELOG.md)
+
+</div>
+
+> [!IMPORTANT]
+> 邮箱密码只用于当次登录请求，不写入本地数据库，但会经过你自行部署的 AstrBot 进程。
+> 启用邮箱登录时必须配置可信的公网 HTTPS 地址，请只在自己信任的 Bot 上登录。
+
+## 功能概览
+
+| 功能           | 当前状态 | 说明                                                            |
+| -------------- | -------- | --------------------------------------------------------------- |
+| 国际服邮箱登录 | 可用     | Bot 发送一次性临时链接，网页完成登录与 UID 选择，成功后主动通知 |
+| 多 UID 管理    | 可用     | 一个 QQ 可绑定多个 UID，并切换当前查询档案                      |
+| 攻略站角色同步 | 可用     | 同步角色、等级、共鸣链及接口提供的武器数据，以接口数据优先      |
+| 纯本地档案     | 可用     | 未绑定账号、未拥有角色也能建立与修改角色档案                    |
+| 角色与练度查询 | 可用     | 支持文本命令、关键词、分页及 `@用户` 查询                       |
+| 图片卡片       | 可用     | 角色列表、角色详情和练度生成图片；渲染失败自动降级为文本        |
+| Dashboard 管理 | 可用     | 管理账号、配置、资源、缓存、备份和管理员审计                    |
+| 声骸评分       | 预留     | 当前不计算，所有评分位置固定显示 `---`                          |
+
+插件不会保存角色历史快照：每个 QQ 的每个档案只保留一份当前数据。接口刷新后，手动覆盖值仍按字段优先展示，重置该字段即可恢复接口值。
+
+## 快速开始
+
+### 环境要求
+
+- AstrBot `>=4.24.2,<5`
+- QQ / OneBot 11（`aiocqhttp`）消息平台
+- 可供 AstrBot 安装依赖的 Python 环境
+- 邮箱登录另需一个反向代理到 AstrBot 的公网 HTTPS 域名
+
+### 管理员安装
+
+推荐直接在 AstrBot 插件市场搜索“鸣潮国际服数据工具”并安装，然后重启或重载插件。
+
+在 AstrBot Dashboard 的插件配置中：
+
+1. 如需邮箱登录，将 `public_https_base_url` 设置为实际可访问的 HTTPS 根地址，例如 `https://bot.example.com`。
+2. 确认反向代理允许访问 AstrBot 注册的插件 Web API。
+3. 按需开启 `allow_query_others`；默认关闭他人查询。
+4. 需要后台定期刷新时再开启 `auto_sync_enabled`。
+
+<details>
+<summary>手动安装</summary>
+
+将仓库目录完整放入 AstrBot 的插件目录，安装 `requirements.txt` 中的依赖后重启 AstrBot。不要只复制 `main.py`，页面、静态资源和数据目录初始化逻辑同样是插件的一部分。
+
+</details>
+
+### 用户开始使用
+
+不登录也可以直接创建纯本地档案：
+
+```text
+/kh 修改 今汐 等级 90
+/kh 修改 今汐 共鸣链 2
+/kh 角色 今汐
+```
+
+要同步国际服账号：
+
+1. 发送 `/kh 登录`。
+2. 打开 Bot 发来的临时 HTTPS 链接并输入国际服邮箱与密码。
+3. 多 UID 账号在网页选择目标 UID。
+4. 登录成功后等待 Bot 提示，再发送 `/kh 同步`。
+
+临时链接与确认码均会过期；有效时间由管理员配置。邮件密码不会持久化。
+
+## 命令说明
+
+`/kh` 是永久兼容入口，管理员可以通过 `extra_command_roots` 增加 `/ww` 等入口，但不能移除 `/kh`。命令兼容消息中的 `@Bot`。
+
+### 查询命令
+
+| 命令                    | 说明                               |
+| ----------------------- | ---------------------------------- |
+| `/kh 角色`              | 查看当前档案角色列表               |
+| `/kh 角色 2页`          | 查看第 2 页；同时兼容 `/kh 角色 2` |
+| `/kh 角色 <角色>`       | 查看角色详情                       |
+| `/kh 练度`              | 查看当前档案练度汇总               |
+| `/kh 角色 [页码] @用户` | 查询被提及用户的角色列表           |
+| `/kh 角色 <角色> @用户` | 查询被提及用户的角色详情           |
+| `/kh 练度 @用户`        | 查询被提及用户的练度               |
+
+只有角色列表、角色详情和练度支持查询他人，且管理员必须全局开启 `allow_query_others`。`@用户` 可放在关键词或命令前后，例如 `@用户 kh练度`、`kh角色 2页 @用户`。
+
+### 账号命令
+
+| 命令                   | 说明                          |
+| ---------------------- | ----------------------------- |
+| `/kh 登录`             | 获取一次性登录链接            |
+| `/kh 登录确认 <code>`  | 在需要时确认登录结果          |
+| `/kh 账号`             | 查看已绑定 UID 与当前档案     |
+| `/kh 切换 <UID\|本地>` | 切换到指定 UID 或纯本地档案   |
+| `/kh 同步 [UID]`       | 刷新指定或当前 UID 的接口数据 |
+| `/kh 解绑 <UID>`       | 发起 UID 解绑，随后按提示确认 |
+| `/kh 确认 <code>`      | 确认解绑、删除或清除操作      |
+
+### 本地档案命令
+
+| 命令                           | 说明                                                             |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `/kh 修改 <角色> 等级 <1-90>`  | 手动覆盖角色等级                                                 |
+| `/kh 修改 <角色> 共鸣链 <0-6>` | 手动覆盖共鸣链                                                   |
+| `/kh 重置 <角色> <字段>`       | 清除手动值；字段可用等级、共鸣链、武器、武器等级、武器精炼或全部 |
+| `/kh 角色删除 <角色>`          | 发起删除当前档案中的角色                                         |
+| `/kh 清除数据`                 | 发起清除当前 QQ 的全部插件数据                                   |
+
+武器名称、等级与精炼的修改入口暂不开放，因为当前静态武器目录尚未完成可靠校验。重置命令中的武器字段仅用于清除已有导入值或兼容数据。
+
+### 通用命令
+
+| 命令                                  | 说明             |
+| ------------------------------------- | ---------------- |
+| `/kh` 或 `/kh 帮助`                   | 查看帮助         |
+| `/kh 语言 <zh-CN\|zh-TW\|en\|ja\|ko>` | 设置个人显示语言 |
+
+### 默认关键词
+
+关键词不要求 `/` 前缀，并支持 `@用户` 前置或后置。管理员可在配置中替换关键词列表。
+
+| 功能 | 默认关键词           | 示例                       |
+| ---- | -------------------- | -------------------------- |
+| 帮助 | `kh帮助`、`鸣潮帮助` | `kh帮助`                   |
+| 登录 | `kh登录`、`鸣潮登录` | `kh登录`                   |
+| 账号 | `kh账号`、`鸣潮账号` | `kh账号`                   |
+| 角色 | `kh角色`、`鸣潮角色` | `kh角色2页`、`kh角色 今汐` |
+| 练度 | `kh练度`、`鸣潮练度` | `@用户 kh练度`             |
+
+## 数据规则
+
+- 账号同步数据来自国际服接口及攻略站；接口返回字段优先于本地静态推断。
+- 用户手动修改的字段作为显式覆盖值展示，重置后重新显示接口值。
+- 未拥有或未同步到的角色也允许在纯本地档案中自由建立和修改。
+- 每个 QQ 可有多个 UID 档案与一个纯本地档案，但同一档案不保存历史版本。
+- 评分字段为后续功能预留，当前统一显示 `---`，不代表零分。
+
+## Dashboard 管理
+
+AstrBot 管理员可从插件管理页进入本插件的 Dashboard 页面。页面提供：
+
+- 运行状态、账号与 UID 概览；
+- 强制解绑 UID、删除指定 QQ 数据；
+- 完整插件配置读取与保存；
+- 角色静态资源检查、更新与回滚；
+- 图片缓存清理；
+- 管理操作审计；
+- 脱敏备份导出，以及备份预检后恢复。
+
+删除、恢复等高风险操作应先核对目标。备份恢复只接受本插件生成且通过结构、清单、数据库与资源校验的压缩包。
+
+## 完整配置
+
+### 入口与查询
+
+| 配置项                  | 默认值             | 范围 / 说明                               |
+| ----------------------- | ------------------ | ----------------------------------------- |
+| `public_https_base_url` | 空                 | 公网 HTTPS 根地址；留空仅禁用网页邮箱登录 |
+| `extra_command_roots`   | `[]`               | 额外正式入口，如 `/ww`；`/kh` 永久保留    |
+| `keyword_help`          | `kh帮助, 鸣潮帮助` | 帮助关键词列表                            |
+| `keyword_login`         | `kh登录, 鸣潮登录` | 登录关键词列表                            |
+| `keyword_account`       | `kh账号, 鸣潮账号` | 账号关键词列表                            |
+| `keyword_character`     | `kh角色, 鸣潮角色` | 角色关键词列表                            |
+| `keyword_progress`      | `kh练度, 鸣潮练度` | 练度关键词列表                            |
+| `allow_query_others`    | `false`            | 是否允许通过 `@用户` 查询他人当前缓存     |
+| `character_page_size`   | `12`               | 每页角色数，`1-30`                        |
+
+### 登录与确认安全
+
+| 配置项                       | 默认值 | 范围 / 说明                             |
+| ---------------------------- | ------ | --------------------------------------- |
+| `login_link_ttl_minutes`     | `5`    | 登录链接有效分钟数，`1-30`              |
+| `confirm_ttl_minutes`        | `5`    | 危险操作确认码有效分钟数，`1-30`        |
+| `confirm_max_attempts`       | `5`    | 确认码最大错误次数，`1-10`              |
+| `login_rate_window_minutes`  | `10`   | 网页登录限流窗口，`1-60` 分钟           |
+| `login_session_max_attempts` | `5`    | 单次会话最大失败次数，`1-20`            |
+| `login_email_max_attempts`   | `8`    | 同一邮箱指纹窗口内最大失败次数，`1-30`  |
+| `login_ip_max_attempts`      | `20`   | 同一来源 IP 窗口内最大失败次数，`1-100` |
+| `login_freeze_minutes`       | `15`   | 触发限流后的冻结时间，`1-120` 分钟      |
+
+邮箱和来源 IP 只以 HMAC 指纹参与限流，不以明文写入限流记录。
+
+### 同步、渲染与审计
+
+| 配置项                       | 默认值  | 范围 / 说明                             |
+| ---------------------------- | ------- | --------------------------------------- |
+| `auto_sync_enabled`          | `false` | 是否启用后台自动同步                    |
+| `auto_sync_interval_hours`   | `12`    | 自动同步间隔，`6-720` 小时              |
+| `sync_concurrency`           | `2`     | 账号同步并发上限，`1-10`                |
+| `role_detail_concurrency`    | `2`     | 角色详情请求并发上限，`1-5`             |
+| `request_timeout_seconds`    | `20`    | 上游请求超时，`5-120` 秒                |
+| `render_timeout_seconds`     | `30`    | 图片渲染超时，`5-120` 秒，超时降级文本  |
+| `admin_audit_retention_days` | `30`    | 管理审计保留天数，`0-365`；`0` 表示关闭 |
+
+## 本地数据目录
+
+所有运行数据均保存在 AstrBot 标准插件数据目录下：
+
+```text
+data/plugin/astrbot_plugin_wuwa_globlesever_tool/
+├─ wuwa.sqlite3
+├─ secrets/
+├─ cache/
+│  ├─ character/
+│  ├─ weapon/
+│  └─ static_data/
+├─ media/
+│  ├─ cards/
+│  └─ temp/
+├─ migrations/
+├─ backups/
+└─ logs/
+```
+
+不要把该目录放到公开下载位置，也不要跨实例混用数据库与密钥。
+
+## 安全与隐私
+
+- 邮箱密码只存在于当次请求处理过程，不持久化；但自托管 AstrBot 会实际接触该密码。
+- 登录链接是短时、一次性凭据；请勿转发，过期后重新获取。
+- 登录入口只接受配置的公网 HTTPS 地址，不根据请求 `Host` 自动推断。
+- Token 与设备凭据加密落盘。静态加密只保护单独泄露的数据文件：如果插件数据目录和主密钥同时泄露，攻击者仍可能解密凭据。
+- Dashboard 导出的默认备份会脱敏，不包含可复用登录凭据；恢复前会先做完整性预检。
+- `allow_query_others` 默认关闭。开启后，群友可以查看被查询对象的当前角色缓存，因此管理员应在公开群谨慎启用。
+- 建议限制 AstrBot 数据目录权限，妥善保存主密钥，只从可信网络访问 Dashboard，并为反向代理配置有效证书。
+
+## 已知限制
+
+- 当前只支持 QQ 的 OneBot 11 / `aiocqhttp` 适配器，其他平台未适配。
+- 声骸评分尚未实现，评分固定显示 `---`。
+- 武器静态目录尚未完成可靠校验，因此手动修改武器相关字段会被拒绝。
+- 国际服及攻略站接口可能变化，且部分接口并非公开稳定契约；同步可能因上游调整暂时失效。
+- `0.5.0` 发布前未使用真实游戏账号执行端到端登录与同步验证。
+- 尚未在真实 AstrBot Dashboard 与真实 OneBot 客户端中完成页面、图片和合并转发消息的全链路验收。
+
+## 更新日志
+
+详见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 鸣谢
+
+实现过程中参考了以下项目的结构、接口与数据处理思路：
+
+- [XutheringWavesUID](https://github.com/Loping151/XutheringWavesUID)
+- [WwTool](https://github.com/conFess233/WwTool)
+- [astrbot_plugin_iconic_quotes](https://github.com/conFess233/astrbot_plugin_iconic_quotes)
+
+## 许可证
+
+[AGPL-3.0](LICENSE)
