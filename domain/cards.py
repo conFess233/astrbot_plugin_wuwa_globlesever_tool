@@ -6,6 +6,7 @@ from pathlib import Path
 
 @dataclass(frozen=True, slots=True)
 class PlayerHeader:
+    avatar_id: str | None
     image_url: str | None
     name: str
     uid: str
@@ -22,6 +23,7 @@ class CardCharacter:
     image_url: str | None
     illustration_picture_url: str | None
     star: int | None
+    element_id: str | None
     element_name: str
     element_image_url: str | None
     origin: str
@@ -33,11 +35,14 @@ class CardCharacter:
     weapon_name: str | None
     weapon_image_url: str | None
     weapon_star: int | None
+    weapon_type_id: str | None
     weapon_type_name: str | None
     weapon_type_image_url: str | None
     weapon_source: str | None
     weapon_level: int | None
     weapon_refinement: int | None
+    score_total: float | None
+    score_grade: str | None
     updated_at: str
 
 
@@ -116,8 +121,29 @@ class ExplorationCard:
     refreshed_at: str
 
 
+@dataclass(frozen=True, slots=True)
+class HelpSection:
+    title: str
+    commands: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class HelpCard:
+    kind: str
+    scope: str
+    heading: str
+    subtitle: str
+    sections: tuple[HelpSection, ...]
+    updated_at: str | None
+
+
 CardViewModel = (
-    CharacterListCard | CharacterDetailCard | AccountInfoCard | DailyCard | ExplorationCard
+    CharacterListCard
+    | CharacterDetailCard
+    | AccountInfoCard
+    | DailyCard
+    | ExplorationCard
+    | HelpCard
 )
 
 

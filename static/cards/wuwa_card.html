@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <style>
+/*__WUWA_CARD_STYLES__*/
+  </style>
+</head>
+<body>
+<main class="card-shell card-{{ kind }}">
+  {% macro shown(value, suffix='') -%}{{ value if value is not none else '---' }}{{ suffix if value is not none else '' }}{%- endmacro %}
+  {% macro player_header(player) -%}
+    <section class="player-header">
+      <div class="player-avatar"><img src="{{ player.image_url }}" alt=""></div>
+      <div class="player-identity">
+        <div class="eyebrow">{{ player.region_name }}</div>
+        <h2>{{ player.name }}</h2>
+        <div class="player-uid">UID {{ player.uid }}</div>
+      </div>
+      <div class="player-facts">
+        <div><span>账号等级</span><strong>{{ shown(player.level, '') }}</strong></div>
+        <div><span>索拉等级</span><strong>{{ shown(player.world_level, '') }}</strong></div>
+        <div><span>角色</span><strong>{{ shown(player.role_count, '') }}</strong></div>
+      </div>
+    </section>
+  {%- endmacro %}
+
+  {% if player is defined and player %}{{ player_header(player) }}{% endif %}
+
+  <header class="section-heading">
+    <div><span class="heading-mark"></span><h1>{{ heading }}</h1></div>
+    {% if kind == 'character_list' %}<strong class="total-count">{{ total_characters }} 名</strong>{% endif %}
+  </header>
+  {% if profile_note %}<div class="profile-note">{{ profile_note }}</div>{% endif %}
+
+  {% if kind == 'character_list' %}
+    {% if characters %}
+      <section class="character-grid">
+      {% for item in characters %}
+        <article class="role-card rarity-{{ item.star if item.star in [4, 5] else 'unknown' }}">
+          <div class="role-art"><img src="{{ item.image_url }}" alt=""></div>
+          <span class="rarity-badge">{{ item.star if item.star is not none else '—' }}★</span>
+          {% set chain_value = item.chain if item.chain is not none else 0 %}
+          <span class="chain-badge chain-{{ chain_value if chain_value in [1,2,3,4,5,6] else 0 }}">{{ chain_value }}链</span>
+          <div class="role-namebar"><strong>{{ item.name }}</strong><span>Lv.{{ item.level if item.level is not none else '---' }}</span></div>
+        </article>
+      {% endfor %}
+      </section>
+    {% else %}
+      <div class="empty-state"><span>◇</span><strong>暂无角色记录</strong><p>可通过刷新接口数据或手动修改角色建立档案</p></div>
+    {% endif %}
+
+  {% elif kind == 'character_detail' %}
+    <section class="character-detail">
+      <div class="detail-hero rarity-{{ character.star if character.star in [4, 5] else 'unknown' }}">
+        <img class="detail-art" src="{{ character.illustration_picture_url or character.image_url }}" alt="">
+        <div class="detail-element"><img src="{{ character.element_image_url }}" alt=""><span>{{ character.element_name }}</span></div>
+        <div class="detail-title"><span>{{ character.star if character.star is not none else '—' }}★</span><h2>{{ character.name }}</h2></div>
+      </div>
+      <div class="detail-content">
+        <div class="detail-metrics">
+          <article><span>角色等级</span><strong>Lv.{{ character.level if character.level is not none else '---' }}</strong></article>
+          <article><span>共鸣链</span><strong>{{ character.chain if character.chain is not none else '---' }} 链</strong></article>
+          <article><span>声骸评分</span><strong>{{ character.score_total if character.score_total is not none else '---' }}</strong></article>
+        </div>
+        <article class="weapon-panel">
+          <div class="weapon-art"><img src="{{ character.weapon_image_url }}" alt=""></div>
+          <div class="weapon-copy">
+            <div class="eyebrow">当前武器</div>
+            <h3>{{ character.weapon_name or '---' }}</h3>
+            <div class="weapon-stars">{% for _ in range(character.weapon_star or 0) %}★{% endfor %}</div>
+            <div class="weapon-meta">
+              {% if character.weapon_type_image_url %}<img src="{{ character.weapon_type_image_url }}" alt="">{% endif %}
+              <span>{{ character.weapon_type_name or '类型未知' }}</span>
+              <i></i><span>Lv.{{ character.weapon_level if character.weapon_level is not none else '---' }}</span>
+              <i></i><span>精炼 {{ character.weapon_refinement if character.weapon_refinement is not none else '---' }}</span>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+  {% elif kind == 'account_info' %}
+    <section class="metric-grid account-metrics">
+      <article class="metric-card"><span>活跃天数</span><strong>{{ shown(active_days) }}</strong><small>天</small></article>
+      <article class="metric-card metric-wide"><span>账号创建时间</span><strong class="date-value">{{ created_at }}</strong></article>
+      <article class="account-summary">
+        <span>当前档案</span>
+        <strong>{{ player.name }}</strong>
+        <p>{{ player.region_name }} · UID {{ player.uid }}</p>
+      </article>
+    </section>
+
+  {% elif kind == 'daily' %}
+    <section class="daily-grid">
+      <article class="status-card energy-card">
+        <div class="status-top"><div><span>结晶波片</span><strong>{{ shown(energy) }}<em>/ {{ shown(max_energy) }}</em></strong></div><b>波片</b></div>
+        <div class="progress"><i style="width: {{ (energy * 100 / max_energy) if energy is not none and max_energy else 0 }}%"></i></div>
+        <small>{{ energy_recover_at }}</small>
+      </article>
+      <article class="status-card reserve-card">
+        <div class="status-top"><div><span>储备结晶单质</span><strong>{{ shown(store_energy) }}<em>/ {{ shown(max_store_energy) }}</em></strong></div><b>储备</b></div>
+        <div class="progress"><i style="width: {{ (store_energy * 100 / max_store_energy) if store_energy is not none and max_store_energy else 0 }}%"></i></div>
+        <small>{{ store_energy_recover_at }}</small>
+      </article>
+      <article class="status-card compact-status">
+        <span>每日活跃度</span>
+        <strong>{% if liveness_unlock is sameas false %}未解锁{% else %}{{ shown(liveness) }}<em>/ {{ shown(liveness_max) }}</em>{% endif %}</strong>
+        <div class="progress"><i style="width: {{ (liveness * 100 / liveness_max) if liveness is not none and liveness_max else 0 }}%"></i></div>
+      </article>
+      <article class="status-card compact-status">
+        <span>战歌重奏</span><strong>{{ shown(weekly_inst_count) }}<em>/ 3</em></strong><small>剩余奖励次数</small>
+      </article>
+      <article class="status-card battle-pass">
+        <div class="battle-pass-head"><div><span>先约电台</span><strong>{% if not battle_pass_present %}---{% elif battle_pass_is_unlock is sameas false %}未解锁{% elif battle_pass_is_open is sameas false %}未开启{% else %}Lv.{{ shown(battle_pass_level) }}{% endif %}</strong></div><b>电台</b></div>
+        {% if battle_pass_present %}
+        <div class="battle-pass-bars">
+          <div><label>当前经验 <span>{{ shown(battle_pass_exp) }} / {{ shown(battle_pass_exp_limit) }}</span></label><div class="progress"><i style="width: {{ (battle_pass_exp * 100 / battle_pass_exp_limit) if battle_pass_exp is not none and battle_pass_exp_limit else 0 }}%"></i></div></div>
+          <div><label>本周经验 <span>{{ shown(battle_pass_week_exp) }} / {{ shown(battle_pass_week_max_exp) }}</span></label><div class="progress"><i style="width: {{ (battle_pass_week_exp * 100 / battle_pass_week_max_exp) if battle_pass_week_exp is not none and battle_pass_week_max_exp else 0 }}%"></i></div></div>
+        </div>
+        {% endif %}
+      </article>
+    </section>
+
+  {% elif kind == 'exploration' %}
+    <section class="exploration-lead"><div><span>已收集声匣</span><strong>{{ shown(sound_box) }}</strong></div><p>探索卡仅呈现国际服接口实际返回的收集数据</p></section>
+    {% for title, items in [('奇藏箱', boxes), ('基础箱统计', basic_boxes), ('潮汐之遗', phantom_boxes)] %}
+    <section class="collection-block">
+      <h2>{{ title }}</h2>
+      <div class="collection-grid columns-{{ items|length }}">
+      {% for name, value in items %}<article><span>{{ name }}</span><strong>{{ shown(value) }}</strong></article>{% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+
+  {% elif kind == 'help' %}
+    <div class="help-intro">{{ subtitle }}</div>
+    <section class="help-sections">
+    {% for section in sections %}
+      <article class="help-section">
+        <h2><i></i>{{ section.title }}</h2>
+        <div class="help-commands">
+        {% for command, description in section.commands %}
+          <div><code>{{ command }}</code><span>{{ description }}</span></div>
+        {% endfor %}
+        </div>
+      </article>
+    {% endfor %}
+    </section>
+  {% endif %}
+
+  {% if kind == 'character_detail' %}
+    <footer>{{ character.updated_at.replace('T', ' ').replace('+00:00', ' UTC') }}</footer>
+  {% elif refreshed_at is defined %}
+    <footer>{{ refreshed_at }}</footer>
+  {% elif updated_at %}
+    <footer>{{ updated_at.replace('T', ' ').replace('+00:00', ' UTC') }}</footer>
+  {% endif %}
+</main>
+</body>
+</html>

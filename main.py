@@ -23,17 +23,17 @@ from .infrastructure.database import Database
 from .infrastructure.http import HttpClient
 from .infrastructure.network import SafeHttpDownloader
 from .infrastructure.storage import RuntimePaths
+from .presentation.cards import AstrBotCardRenderer, CardAssetPreparer
 from .presentation.resources import FontManager, ResourceManager, UiAssetManifest
 from .repositories.accounts import AccountError, AccountRepository
 from .repositories.local_data import LocalDataError, LocalDataRepository
 from .services.backups import BackupService
-from .services.cards import AstrBotCardRenderer, CardService
+from .services.cards import CardService
 from .services.catalog import CatalogError, CharacterCatalog
 from .services.command_service import CommandService, CommandServiceError
 from .services.dashboard import DashboardService
 from .services.login_sessions import LoginSessionError, LoginSessionService
 from .services.player_data import PlayerDataService
-from .services.resource_cache import StaticImageCache
 from .services.settings import PluginSettings
 from .services.sync import GuideSyncService, SyncError
 from .web.dashboard import DashboardWebManager
@@ -209,12 +209,16 @@ class WuWaGlobalServerPlugin(Star):
             self.paths.snapshots_raw,
         )
         self.card_renderer = AstrBotCardRenderer(
-            self.plugin_root / "assets" / "templates" / "wuwa_cards.html",
+            self.plugin_root / "static" / "cards" / "wuwa_card.html",
+            self.plugin_root / "static" / "cards" / "wuwa_card.css",
             self.paths.media_cards,
             self._html_render_file,
             self.settings.render_timeout_seconds,
-            StaticImageCache(self.paths.cache_character, self._fetch_static_image),
-            StaticImageCache(self.paths.cache_weapon, self._fetch_static_image),
+            CardAssetPreparer(
+                self.resource_manager,
+                self.font_manager,
+                self.ui_assets,
+            ),
         )
         self.commands = CommandService(
             self.repository,
@@ -338,13 +342,6 @@ class WuWaGlobalServerPlugin(Star):
             data,
             return_url=False,
             options=options,
-        )
-
-    async def _fetch_static_image(self, url: str, max_bytes: int) -> bytes:
-        return await self.http.get_bytes(
-            url,
-            allowed_hosts={"guide-res.aki-game.net"},
-            max_bytes=max_bytes,
         )
 
     async def _fetch_catalog(self) -> object:

@@ -59,7 +59,7 @@ class CommandService:
             await self.accounts.touch_origin(actor_qq, origin_context)
 
         if command.name == CommandName.HELP:
-            return self._help()
+            return await self.cards.help()
         if command.name == CommandName.LOGIN:
             if self.login_sessions is None:
                 raise CommandServiceError("网页登录服务尚未初始化")
@@ -317,26 +317,3 @@ class CommandService:
         if not minimum <= value <= maximum:
             raise CommandServiceError(f"数值必须是 {minimum}-{maximum} 的整数")
         return value
-
-    @staticmethod
-    def _help() -> str:
-        return (
-            "鸣潮国际服数据工具\n"
-            "/kh 角色 [@用户]\n"
-            "/kh 角色 <角色名|角色ID> [@用户]\n"
-            "/kh 账号信息 [@用户]\n"
-            "/kh 日常\n"
-            "/kh 探索 [@用户]\n"
-            "/kh 修改 <角色> 等级 <1-90>\n"
-            "/kh 修改 <角色> 共鸣链 <0-6>\n"
-            "/kh 修改 <角色> 武器 <名称>\n"
-            "/kh 修改 <角色> 武器等级 <1-90>\n"
-            "/kh 修改 <角色> 武器精炼 <1-5>\n"
-            "/kh 重置 <角色> <等级|共鸣链|武器|武器等级|武器精炼|全部>\n"
-            "/kh 删除角色 <角色>\n"
-            "/kh 登录 | /kh 取消登录\n"
-            "/kh 账号 | /kh 切换 <UID|本地> | /kh 解绑 <UID>\n"
-            "/kh 刷新 [UID] | /kh 同步 [UID]\n"
-            "/kh 确认 | /kh 取消\n"
-            "兼容关键词：kh角色、kh角色 <角色>、kh账号信息、kh日常、kh探索。"
-        )

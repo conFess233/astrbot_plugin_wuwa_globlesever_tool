@@ -1,14 +1,7 @@
 """从查询记录构建统一 ViewModel，并通过 AstrBot HTML 渲染图片卡。"""
 
-import asyncio
-import hashlib
-import json
 import logging
-import shutil
-from collections.abc import Awaitable, Callable
-from dataclasses import asdict
 from datetime import UTC, datetime
-from pathlib import Path
 
 from ..domain.cards import (
     AccountInfoCard,
@@ -19,18 +12,17 @@ from ..domain.cards import (
     CharacterListCard,
     DailyCard,
     ExplorationCard,
+    HelpCard,
+    HelpSection,
     PlayerHeader,
 )
 from ..domain.player import PlayerSnapshot
+from ..presentation.cards import AstrBotCardRenderer
 from ..repositories.local_data import CharacterRecord, ProfileSelection
 from .catalog import CharacterCatalog
-from .resource_cache import StaticImageCache
 
 logger = logging.getLogger(__name__)
 
-_RENDER_SCHEMA = "wuwa-card-v2"
-_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-_MAX_CARD_BYTES = 24 * 1024 * 1024
 _SOURCE_NAMES = {"api": "接口", "manual": "手动", "mixed": "混合"}
 _ELEMENT_NAMES = {
     "1": "冷凝",
@@ -49,123 +41,6 @@ _WEAPON_PREFIX_NAMES = {
 }
 _BOX_NAMES = ("朴素奇藏箱", "基准奇藏箱", "精密奇藏箱", "辉光奇藏箱")
 _PHANTOM_NAMES = ("绿色潮汐之遗", "紫色潮汐之遗", "金色潮汐之遗")
-
-HtmlRender = Callable[[str, dict[str, object], dict[str, object]], Awaitable[str]]
-
-
-class CardRenderError(RuntimeError):
-    """表示 AstrBot HTML 渲染或渲染缓存不可用。"""
-
-
-class AstrBotCardRenderer:
-    def __init__(
-        self,
-        template_path: Path,
-        cache_directory: Path,
-        html_render: HtmlRender,
-        timeout_seconds: int,
-        resource_cache: StaticImageCache | None = None,
-        weapon_resource_cache: StaticImageCache | None = None,
-    ):
-        self.template_path = template_path
-        self.cache_directory = cache_directory
-        self.html_render = html_render
-        self.timeout_seconds = timeout_seconds
-        self.resource_cache = resource_cache
-        self.weapon_resource_cache = weapon_resource_cache
-        self._locks: dict[str, asyncio.Lock] = {}
-
-    async def render(self, view_model: CardViewModel) -> Path:
-        payload = asdict(view_model)
-        digest = hashlib.sha256(
-            json.dumps(
-                {"schema": _RENDER_SCHEMA, "payload": payload},
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()[:24]
-        scope = _safe_scope(view_model.scope)
-        target = self.cache_directory / f"{scope}-{digest}.png"
-        if await asyncio.to_thread(_valid_png, target):
-            return target
-
-        lock = self._locks.setdefault(scope, asyncio.Lock())
-        async with lock:
-            if await asyncio.to_thread(_valid_png, target):
-                return target
-            try:
-                template = await asyncio.to_thread(self.template_path.read_text, encoding="utf-8")
-                rendered_path = await asyncio.wait_for(
-                    self._render_uncached(template, payload),
-                    timeout=self.timeout_seconds,
-                )
-                source = await asyncio.to_thread(_absolute_path, rendered_path)
-                if not await asyncio.to_thread(_valid_png, source):
-                    raise CardRenderError("AstrBot 返回的图片文件无效")
-                await asyncio.to_thread(self.cache_directory.mkdir, parents=True, exist_ok=True)
-                await asyncio.to_thread(shutil.copyfile, source, target)
-                await asyncio.to_thread(self._prune_scope, scope, target)
-            except (OSError, ValueError, asyncio.TimeoutError) as exc:
-                raise CardRenderError("图片渲染失败") from exc
-            if not await asyncio.to_thread(_valid_png, target):
-                raise CardRenderError("图片缓存写入失败")
-            return target
-
-    async def _render_uncached(self, template: str, payload: dict[str, object]) -> str:
-        render_payload = await self._localize_images(payload)
-        return await self.html_render(
-            template,
-            render_payload,
-            {
-                "type": "png",
-                "full_page": True,
-                "animations": "disabled",
-                "scale": "css",
-            },
-        )
-
-    async def _localize_images(self, payload: dict[str, object]) -> dict[str, object]:
-        if self.resource_cache is None:
-            return payload
-        result = dict(payload)
-        locations: list[tuple[dict[str, object], str, str]] = []
-        self._collect_images(result, locations)
-        semaphore = asyncio.Semaphore(4)
-
-        async def resolve(key: str, url: str) -> str | None:
-            cache = (
-                self.weapon_resource_cache
-                if key.startswith("weapon_") and self.weapon_resource_cache is not None
-                else self.resource_cache
-            )
-            async with semaphore:
-                return await cache.data_uri(url)
-
-        resolved = await asyncio.gather(*(resolve(key, url) for _, key, url in locations))
-        for (container, key, _), data_uri in zip(locations, resolved, strict=True):
-            container[key] = data_uri
-        return result
-
-    def _collect_images(
-        self,
-        value: object,
-        locations: list[tuple[dict[str, object], str, str]],
-    ) -> None:
-        if isinstance(value, dict):
-            for key, item in tuple(value.items()):
-                if key.endswith("_url") and isinstance(item, str) and item:
-                    locations.append((value, key, item))
-                else:
-                    self._collect_images(item, locations)
-        elif isinstance(value, (list, tuple)):
-            for item in value:
-                self._collect_images(item, locations)
-
-    def _prune_scope(self, scope: str, keep: Path) -> None:
-        for candidate in self.cache_directory.glob(f"{scope}-*.png"):
-            if candidate != keep and candidate.parent == self.cache_directory:
-                candidate.unlink(missing_ok=True)
 
 
 class CardService:
@@ -196,6 +71,58 @@ class CardService:
             updated_at=_latest_update(records),
         )
         return await self._response(model, _list_text(model))
+
+    async def help(self) -> str | CardMessage:
+        model = HelpCard(
+            kind="help",
+            scope="global-help",
+            heading="鸣潮国际服数据工具",
+            subtitle="命令入口 /kh · 同时兼容已配置关键词与 @Bot 场景",
+            sections=(
+                HelpSection(
+                    "查询",
+                    (
+                        ("/kh 角色 [@用户]", "角色总览长图"),
+                        ("/kh 角色 <角色> [@用户]", "角色详细档案"),
+                        ("/kh 账号信息 [@用户]", "账号基础信息"),
+                        ("/kh 日常", "结晶波片、活跃度、周常与电台"),
+                        ("/kh 探索 [@用户]", "收集与奇藏箱数据"),
+                    ),
+                ),
+                HelpSection(
+                    "账号",
+                    (
+                        ("/kh 登录", "创建限时网页登录链接"),
+                        ("/kh 取消登录", "立即作废当前登录链接"),
+                        ("/kh 账号", "查看已绑定区服账号"),
+                        ("/kh 切换 <编号|UID|本地>", "切换活动档案"),
+                        ("/kh 刷新 [UID]", "主动刷新角色与账号数据"),
+                    ),
+                ),
+                HelpSection(
+                    "手动维护",
+                    (
+                        ("/kh 修改 <角色> 等级 <1-90>", "覆盖角色等级"),
+                        ("/kh 修改 <角色> 共鸣链 <0-6>", "覆盖共鸣链"),
+                        ("/kh 修改 <角色> 武器 <名称>", "记录武器名称"),
+                        ("/kh 修改 <角色> 武器等级 <1-90>", "记录武器等级"),
+                        ("/kh 修改 <角色> 武器精炼 <1-5>", "记录武器精炼"),
+                        ("/kh 重置 <角色> <字段|全部>", "移除手动覆盖"),
+                        ("/kh 删除角色 <角色>", "删除纯本地角色"),
+                    ),
+                ),
+                HelpSection(
+                    "确认",
+                    (
+                        ("/kh 确认", "确认当前会话中的待执行操作"),
+                        ("/kh 取消", "取消当前待执行操作"),
+                        ("/kh 解绑 <UID>", "发起账号解绑"),
+                    ),
+                ),
+            ),
+            updated_at=None,
+        )
+        return await self._response(model, _help_text(model))
 
     async def character_detail(
         self,
@@ -273,6 +200,7 @@ class CardService:
     def _player_header(self, snapshot: PlayerSnapshot) -> PlayerHeader:
         avatar = self.catalog.get(snapshot.head_photo)
         return PlayerHeader(
+            avatar_id=str(snapshot.head_photo) if snapshot.head_photo is not None else None,
             image_url=avatar.card_picture_url if avatar is not None else None,
             name=snapshot.player_name or "漂泊者",
             uid=snapshot.uid,
@@ -290,6 +218,7 @@ class CardService:
             image_url=definition.card_picture_url,
             illustration_picture_url=definition.illustration_picture_url,
             star=definition.star,
+            element_id=definition.element_id,
             element_name=_ELEMENT_NAMES.get(definition.element_id or "", "未知属性"),
             element_image_url=definition.element_picture_url,
             origin=record.record_origin,
@@ -301,11 +230,14 @@ class CardService:
             weapon_name=record.weapon_name,
             weapon_image_url=record.weapon_picture_url,
             weapon_star=record.weapon_star,
+            weapon_type_id=record.weapon_type_id,
             weapon_type_name=_weapon_type_name(record),
             weapon_type_image_url=record.weapon_type_picture_url,
             weapon_source=record.weapon_source,
             weapon_level=record.weapon_level,
             weapon_refinement=record.weapon_refinement,
+            score_total=record.score_total,
+            score_grade=record.score_grade,
             updated_at=record.updated_at,
         )
 
@@ -420,6 +352,14 @@ def _exploration_text(model: ExplorationCard) -> str:
     return "\n".join(lines)
 
 
+def _help_text(model: HelpCard) -> str:
+    lines = [model.heading, model.subtitle]
+    for section in model.sections:
+        lines.append(f"\n{section.title}")
+        lines.extend(f"{command} · {description}" for command, description in section.commands)
+    return "\n".join(lines)
+
+
 def _collection_rows(
     values: tuple[tuple[str, int], ...] | None,
     labels: tuple[str, ...],
@@ -490,27 +430,4 @@ def _weapon_type_name(record: CharacterRecord) -> str | None:
         name = _WEAPON_PREFIX_NAMES.get(weapon_id[:4])
         if name is not None:
             return name
-    if record.weapon_type_id:
-        return f"类型 {record.weapon_type_id}"
     return None
-
-
-def _safe_scope(value: str) -> str:
-    return "".join(
-        character if character.isalnum() or character == "-" else "-" for character in value
-    )
-
-
-def _valid_png(path: Path) -> bool:
-    try:
-        size = path.stat().st_size
-        if not 8 < size <= _MAX_CARD_BYTES:
-            return False
-        with path.open("rb") as stream:
-            return stream.read(8) == _PNG_SIGNATURE
-    except OSError:
-        return False
-
-
-def _absolute_path(value: str) -> Path:
-    return Path(value).resolve()
