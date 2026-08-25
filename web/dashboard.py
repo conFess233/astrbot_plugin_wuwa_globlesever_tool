@@ -73,6 +73,7 @@ class DashboardWebManager:
         return await self._write(
             lambda dashboard, payload: dashboard.force_unbind(
                 str(request.username),
+                str(payload.get("region_id") or ""),
                 str(payload.get("uid") or ""),
                 str(payload.get("confirmation") or ""),
             )
@@ -125,6 +126,39 @@ class DashboardWebManager:
                 str(request.username), str(payload.get("confirmation") or "")
             )
         )
+
+    async def fonts(self):
+        return await self._read(lambda dashboard: dashboard.fonts_snapshot())
+
+    async def install_font(self):
+        return await self._write(
+            lambda dashboard, payload: dashboard.install_font(
+                str(request.username),
+                str(payload.get("url") or ""),
+                str(payload.get("display_name") or ""),
+                bool(payload.get("make_default")),
+            )
+        )
+
+    async def set_default_font(self):
+        return await self._write(
+            lambda dashboard, payload: dashboard.set_default_font(
+                str(request.username), str(payload.get("font_id") or "")
+            )
+        )
+
+    async def delete_font(self):
+        return await self._write(
+            lambda dashboard, payload: dashboard.delete_font(
+                str(request.username),
+                str(payload.get("font_id") or ""),
+                str(payload.get("confirmation") or ""),
+            )
+        )
+
+    async def card_preview(self):
+        kind = str(request.query.get("kind", "account_info") or "account_info")
+        return await self._read(lambda dashboard: dashboard.card_preview(kind))
 
     async def audit(self):
         if not self._authenticated():

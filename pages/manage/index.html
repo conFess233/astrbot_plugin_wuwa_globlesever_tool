@@ -27,6 +27,7 @@
       <button class="tab active" data-tab="overview" type="button" data-icon="dashboard">运行概览</button>
       <button class="tab" data-tab="accounts" type="button" data-icon="groups">账号管理</button>
       <button class="tab" data-tab="config" type="button" data-icon="settings">插件配置</button>
+      <button class="tab" data-tab="appearance" type="button" data-icon="image">字体与卡片</button>
       <button class="tab" data-tab="resources" type="button" data-icon="archive">数据与资源</button>
     </nav>
 
@@ -79,6 +80,40 @@
           <div id="config-groups" class="config-groups"></div>
         </div>
       </div>
+    </section>
+
+    <section id="appearance-panel" class="panel">
+      <div class="section-grid two-columns appearance-grid">
+        <article class="section-card">
+          <div class="section-heading">
+            <div><span class="eyebrow">字体</span><h2>下载与安装</h2><p>支持直接 TTF/OTF 和 ZIP；地址、压缩包与字体内部结构均由后端校验。</p></div>
+            <span class="section-icon primary" data-icon-host="type" aria-hidden="true"></span>
+          </div>
+          <div class="font-install-grid">
+            <label class="field full"><span>预设字体</span><select id="font-preset"><option value="">选择预设或填写自定义链接</option></select></label>
+            <label class="field full"><span>下载链接</span><input id="font-url" type="url" placeholder="https://example.com/font.zip"></label>
+            <label class="field"><span>显示名称（可选）</span><input id="font-name" placeholder="单字体文件可覆盖内部名称"></label>
+            <label class="switch-row font-default-switch"><span class="switch-copy"><strong>安装后设为默认</strong><small>ZIP 中默认选择首个有效字体</small></span><input id="font-make-default" type="checkbox" role="switch"></label>
+          </div>
+          <div class="button-row"><button id="install-font" class="btn btn-primary" type="button" data-icon="download">下载并安装</button></div>
+        </article>
+
+        <article class="section-card">
+          <div class="section-heading">
+            <div><span class="eyebrow">字体库</span><h2>已安装字体</h2><p>切换默认字体会清理旧卡片缓存；当前默认字体不能直接删除。</p></div>
+            <span id="font-count" class="chip">0 项</span>
+          </div>
+          <div id="font-list" class="font-list"></div>
+        </article>
+      </div>
+
+      <article class="section-card preview-card">
+        <div class="section-title-row">
+          <div><h2>卡片预览</h2><p>调用与群聊查询完全相同的资源准备、字体和渲染链路。</p></div>
+          <div class="preview-actions"><label class="field compact-field"><span>卡片类型</span><select id="preview-kind"><option value="account_info">账号信息</option><option value="character_list">角色总览</option><option value="character_detail">角色详情</option><option value="daily">日常状态</option><option value="exploration">探索收集</option><option value="help">帮助</option></select></label><button id="render-preview" class="btn btn-tonal" type="button" data-icon="refresh">生成预览</button></div>
+        </div>
+        <div id="card-preview" class="card-preview"><div class="preview-placeholder"><span data-icon-host="image"></span><strong>尚未生成预览</strong><p>选择卡片类型后点击“生成预览”。</p></div></div>
+      </article>
     </section>
 
     <section id="resources-panel" class="panel">

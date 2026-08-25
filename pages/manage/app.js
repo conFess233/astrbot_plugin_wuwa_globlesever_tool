@@ -16,6 +16,7 @@ const ICONS = {
   folder: '<path d="M3 6h7l2 2h9v11H3z"/>',
   groups: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m7-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm8 4a4 4 0 0 1 4 4v2m-4-10a4 4 0 0 0 0-8"/>',
   history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5m4-1v5l3 2"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 20"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-9h.01"/>',
   refresh: '<path d="M20 7v5h-5M4 17v-5h5m10.5-3A8 8 0 0 0 6.2 6.2L4 8m16 8-2.2 1.8A8 8 0 0 1 4.5 15"/>',
   save: '<path d="M5 3h12l3 3v15H4V3h1Zm3 0v6h8V3M8 21v-7h8v7"/>',
@@ -23,6 +24,7 @@ const ICONS = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>',
   storage: '<path d="M4 4h16v5H4zM4 9v5h16V9M4 14v6h16v-6M8 6.5h.01M8 11.5h.01M8 17h.01"/>',
   sync: '<path d="M20 7v5h-5M4 17v-5h5m10.5-3A8 8 0 0 0 6.2 6.2L4 8m16 8-2.2 1.8A8 8 0 0 1 4.5 15"/>',
+  type: '<path d="M4 6V4h16v2M9 20h6M12 4v16"/>',
   upload: '<path d="M12 16V4m-5 5 5-5 5 5M5 20h14"/>',
 };
 
@@ -32,22 +34,27 @@ const CONFIG = [
     ["login_server_host", "独立登录监听地址", "text", "同机 Cloudflare Tunnel 保持 127.0.0.1"],
     ["login_server_port", "独立登录监听端口", "number", "默认 6199；Cloudflare Service 指向此端口"],
     ["login_trust_proxy_headers", "信任代理来源 IP", "bool", "同机 Cloudflare Tunnel 开启；直接开放端口时关闭"],
+    ["login_trusted_proxy_cidrs", "额外可信代理网段", "list", "跨主机代理时填写来源 CIDR；同机 Tunnel 留空"],
     ["extra_command_roots", "额外命令入口", "list", "逗号分隔；永久兼容入口 /kh 不受影响"],
     ["allow_query_others", "允许查询他人", "bool", "启用后可通过 @用户 查询角色、账号信息和探索"],
+    ["query_refresh_enabled", "查询前自动刷新账号数据", "bool", "账号信息、日常与探索在冷却外先获取一次最新数据"],
+    ["player_refresh_cooldown_seconds", "账号数据刷新冷却（秒）", "number", "账号信息、日常与探索共用"],
+    ["role_refresh_cooldown_minutes", "角色刷新冷却（分钟）", "number", "用户主动刷新按区服与 UID 分开计算"],
   ]],
   ["关键词", "search", [
     ["keyword_help", "帮助关键词", "list", "逗号分隔"],
     ["keyword_login", "登录关键词", "list", "逗号分隔"],
+    ["keyword_cancel_login", "取消登录关键词", "list", "逗号分隔"],
     ["keyword_account", "账号关键词", "list", "逗号分隔"],
+    ["keyword_switch", "切换账号关键词", "list", "逗号分隔"],
     ["keyword_account_info", "账号信息关键词", "list", "逗号分隔"],
     ["keyword_character", "角色关键词", "list", "逗号分隔"],
     ["keyword_daily", "日常关键词", "list", "逗号分隔；仅限本人"],
     ["keyword_exploration", "探索关键词", "list", "逗号分隔"],
+    ["keyword_refresh", "刷新关键词", "list", "逗号分隔"],
   ]],
-  ["登录与确认", "groups", [
-    ["login_link_ttl_minutes", "登录链接有效期（分钟）", "number", "允许 1–30"],
-    ["confirm_ttl_minutes", "敏感操作确认有效期（分钟）", "number", "允许 1–30"],
-    ["confirm_max_attempts", "确认最大尝试次数", "number", "允许 1–10"],
+  ["登录安全", "groups", [
+    ["login_link_ttl_minutes", "登录链接有效期（分钟）", "number", "允许 1–60"],
     ["login_rate_window_minutes", "登录限流窗口（分钟）", "number", "允许 1–60"],
     ["login_session_max_attempts", "会话最大尝试次数", "number", "允许 1–20"],
     ["login_email_max_attempts", "邮箱窗口最大尝试次数", "number", "允许 1–30"],
@@ -56,11 +63,16 @@ const CONFIG = [
   ]],
   ["同步与运行", "sync", [
     ["auto_sync_enabled", "启用自动同步", "bool", "按配置周期刷新已绑定 UID"],
-    ["auto_sync_interval_hours", "自动同步周期（小时）", "number", "允许 6–720"],
+    ["auto_sync_interval_minutes", "自动同步周期（分钟）", "number", "允许 30–1440"],
     ["sync_concurrency", "账号同步并发", "number", "允许 1–10"],
     ["role_detail_concurrency", "角色详情并发", "number", "允许 1–5"],
-    ["request_timeout_seconds", "请求超时（秒）", "number", "允许 5–120；保存后重建共享 HTTP 会话"],
+    ["request_timeout_seconds", "单次上游请求超时（秒）", "number", "允许 5–120；保存后重建共享 HTTP 会话"],
+    ["request_retry_count", "幂等请求重试次数", "number", "允许 0–5；登录与状态变更请求不盲目重试"],
+    ["player_refresh_timeout_seconds", "账号数据整体刷新超时（秒）", "number", "允许 10–180"],
+    ["role_refresh_timeout_seconds", "角色数据整体刷新超时（秒）", "number", "允许 30–600"],
     ["render_timeout_seconds", "渲染超时（秒）", "number", "允许 5–120"],
+    ["resource_cache_max_mb", "图片资源缓存上限（MiB）", "number", "允许 64–4096；当前引用资源不会被回收"],
+    ["resource_download_timeout_seconds", "资源与字体下载超时（秒）", "number", "允许 10–300"],
     ["admin_audit_retention_days", "管理员审计保留天数", "number", "允许 0–365；0 表示不记录"],
   ]],
 ];
@@ -73,6 +85,7 @@ const state = {
   draft: {},
   dirty: false,
   inspection: null,
+  fonts: null,
   loading: 0,
 };
 
@@ -235,7 +248,7 @@ function actionButton(label, iconName, handler) {
 function accountActions(item) {
   const box = element("div", "row-actions");
   box.append(
-    actionButton(`解绑 UID ${item.uid}`, "history", () => forceUnbind(item.uid)),
+    actionButton(`解绑 ${item.region_id}/${item.uid}`, "history", () => forceUnbind(item.region_id, item.uid)),
     actionButton(`删除 QQ ${item.qq_id}`, "delete", () => deleteUser(item.qq_id)),
   );
   return box;
@@ -383,7 +396,10 @@ function renderResources(data) {
     ["可回滚", data.can_rollback ? "是" : "否"],
   ]);
   definitionList($("#cache-details"), [
-    ["角色图片", `${data.character_cache.count} 项 · ${formatBytes(data.character_cache.bytes)}`],
+    ["受管图片", `${data.managed_images.count} 项 · ${formatBytes(data.managed_images.bytes)} / ${formatBytes(data.managed_images.limit_bytes)}`],
+    ["当前引用", `${data.managed_images.referenced} 项`],
+    ["自定义字体", `${data.fonts.count} 项 · ${data.fonts.default || "系统字体"}`],
+    ["旧版角色图片", `${data.character_cache.count} 项 · ${formatBytes(data.character_cache.bytes)}`],
     ["渲染卡片", `${data.card_cache.count} 项 · ${formatBytes(data.card_cache.bytes)}`],
     ["临时文件", `${data.temp.count} 项 · ${formatBytes(data.temp.bytes)}`],
   ]);
@@ -392,6 +408,97 @@ function renderResources(data) {
 
 async function loadResources() {
   renderResources(await bridge.apiGet("dashboard/resources"));
+}
+
+function renderFonts(data) {
+  state.fonts = data;
+  const preset = $("#font-preset");
+  const selectedPreset = preset.value;
+  const options = [element("option", "", "选择预设或填写自定义链接")];
+  options[0].value = "";
+  for (const item of data.presets || []) {
+    const option = element("option", "", item.display_name || item.id);
+    option.value = item.id;
+    option.dataset.url = item.download_url || "";
+    option.dataset.name = item.display_name || "";
+    option.dataset.note = item.note || "";
+    options.push(option);
+  }
+  preset.replaceChildren(...options);
+  if ([...preset.options].some((item) => item.value === selectedPreset)) preset.value = selectedPreset;
+  $("#font-count").textContent = `${data.items.length} 项`;
+
+  if (!data.items.length) {
+    const empty = element("div", "font-empty");
+    empty.append(icon("type"), element("strong", "", "尚未安装自定义字体"), element("span", "", "卡片当前使用系统字体回退。"));
+    $("#font-list").replaceChildren(empty);
+    return;
+  }
+  $("#font-list").replaceChildren(...data.items.map((item) => {
+    const row = element("div", "font-row");
+    const copy = element("div", "font-row-copy");
+    const title = element("strong", "", item.display_name);
+    if (item.is_default) title.append(element("span", "status success", "默认"));
+    const source = item.source_url ? (() => { try { return new URL(item.source_url).hostname; } catch { return item.source_url; } })() : "本地字体";
+    copy.append(title, element("small", "", `${item.weight} · ${item.style} · ${source}`));
+    const actions = element("div", "font-row-actions");
+    if (!item.is_default) {
+      const select = element("button", "btn btn-tonal", "设为默认");
+      select.type = "button";
+      select.addEventListener("click", () => task(() => setDefaultFont(item.font_id)).catch((error) => notify(error.message, true)));
+      const remove = element("button", "btn btn-danger-tonal", "删除");
+      remove.type = "button";
+      remove.addEventListener("click", () => task(() => deleteFont(item)).catch((error) => notify(error.message, true)));
+      actions.append(select, remove);
+    }
+    row.append(copy, actions);
+    return row;
+  }));
+}
+
+async function loadFonts() {
+  renderFonts(await bridge.apiGet("dashboard/fonts"));
+}
+
+async function installFont() {
+  const url = $("#font-url").value.trim();
+  if (!url) return notify("请选择预设或填写字体下载链接。", true);
+  renderFonts(await bridge.apiPost("dashboard/fonts/install", {
+    url,
+    display_name: $("#font-name").value.trim(),
+    make_default: $("#font-make-default").checked,
+  }));
+  $("#font-name").value = "";
+  notify("字体已通过安全校验并安装。重新生成卡片即可查看效果。");
+  await Promise.all([loadResources(), loadAudit()]);
+}
+
+async function setDefaultFont(fontId) {
+  renderFonts(await bridge.apiPost("dashboard/fonts/default", { font_id: fontId }));
+  notify("默认字体已切换，旧卡片缓存已清理。");
+  await Promise.all([loadResources(), loadAudit()]);
+}
+
+async function deleteFont(item) {
+  const confirmation = await typedConfirm("删除字体", `将删除“${item.display_name}”的本地字体文件。`, "删除字体");
+  if (confirmation === null) return;
+  renderFonts(await bridge.apiPost("dashboard/fonts/delete", {
+    font_id: item.font_id,
+    confirmation,
+  }));
+  notify("字体已删除。");
+  await Promise.all([loadResources(), loadAudit()]);
+}
+
+async function renderCardPreview() {
+  const kind = $("#preview-kind").value;
+  const area = $("#card-preview");
+  area.replaceChildren(element("div", "skeleton preview-skeleton"));
+  const result = await bridge.apiGet("dashboard/cards/preview", { kind });
+  const image = document.createElement("img");
+  image.alt = `${$("#preview-kind").selectedOptions[0].textContent}预览`;
+  image.src = result.data_uri;
+  area.replaceChildren(image);
 }
 
 async function loadAudit() {
@@ -439,11 +546,12 @@ function typedConfirm(title, message, expected) {
   }, { once: true }));
 }
 
-async function forceUnbind(uid) {
-  const confirmation = await typedConfirm("强制解绑 UID", "将删除该 UID 绑定及其 UID 档案；本地独立档案不受影响。", uid);
+async function forceUnbind(regionId, uid) {
+  const accountKey = `${regionId}/${uid}`;
+  const confirmation = await typedConfirm("强制解绑账号", "将删除该区服账号绑定及其 UID 档案；其他区服中的相同 UID 不受影响。", accountKey);
   if (confirmation === null) return;
-  await bridge.apiPost("dashboard/accounts/unbind", { uid, confirmation });
-  notify(`UID ${uid} 已解绑。`);
+  await bridge.apiPost("dashboard/accounts/unbind", { region_id: regionId, uid, confirmation });
+  notify(`${accountKey} 已解绑。`);
   await Promise.all([loadAccounts(), loadOverview(), loadAudit()]);
 }
 
@@ -491,7 +599,7 @@ async function commitBackup() {
 }
 
 async function loadAll() {
-  await Promise.all([loadOverview(), loadAccounts(), loadConfig(), loadResources(), loadAudit()]);
+  await Promise.all([loadOverview(), loadAccounts(), loadConfig(), loadResources(), loadFonts(), loadAudit()]);
 }
 
 const context = await bridge.ready();
@@ -519,6 +627,21 @@ $("#account-prev").addEventListener("click", () => { state.accountPage -= 1; tas
 $("#account-next").addEventListener("click", () => { state.accountPage += 1; task(loadAccounts).catch((error) => notify(error.message, true)); });
 $("#discard-config").addEventListener("click", () => { state.draft = structuredClone(state.config); setDirty(false); renderConfig(); });
 $("#save-config").addEventListener("click", () => task(saveConfig).catch((error) => notify(error.message, true)));
+
+$("#font-preset").addEventListener("change", () => {
+  const option = $("#font-preset").selectedOptions[0];
+  if (!option?.value) return;
+  $("#font-url").value = option.dataset.url || "";
+  $("#font-name").value = option.dataset.name || "";
+  if (option.dataset.note) notify(option.dataset.note);
+});
+$("#install-font").addEventListener("click", () => task(installFont).catch((error) => notify(error.message, true)));
+$("#render-preview").addEventListener("click", () => task(renderCardPreview).catch((error) => {
+  notify(error.message, true);
+  const placeholder = element("div", "preview-placeholder");
+  placeholder.append(icon("alert"), element("strong", "", "预览生成失败"), element("p", "", error.message));
+  $("#card-preview").replaceChildren(placeholder);
+}));
 
 $("#check-resource").addEventListener("click", () => task(async () => {
   const result = await bridge.apiPost("dashboard/resources/check", {});

@@ -1,6 +1,7 @@
 """Dashboard 管理核心：统计、账号、配置、资源与审计。"""
 
 import asyncio
+import base64
 import json
 import shutil
 import sqlite3
@@ -10,10 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from ..constants import PLUGIN_VERSION, SCHEMA_VERSION
-from ..infrastructure.card_cache import remove_profile_cards
+from ..infrastructure.card_cache import remove_all_cards, remove_profile_cards
 from ..infrastructure.crypto import TokenCipher
 from ..infrastructure.database import Database
 from ..infrastructure.storage import RuntimePaths
+from ..presentation.cards import CardPreviewService
+from ..presentation.resources import FontEntry, FontManager, ResourceManager
 from .catalog import CharacterCatalog
 from .settings import PluginSettings
 
@@ -45,6 +48,9 @@ class DashboardService:
         apply_catalog: ApplyCatalog,
         fetch_catalog: FetchCatalog,
         auto_sync_running: AutoSyncState | None = None,
+        resource_manager: ResourceManager | None = None,
+        font_manager: FontManager | None = None,
+        card_previews: CardPreviewService | None = None,
     ):
         self.database = database
         self.paths = paths
@@ -56,8 +62,14 @@ class DashboardService:
         self.apply_catalog = apply_catalog
         self.fetch_catalog = fetch_catalog
         self.auto_sync_running = auto_sync_running or (lambda: False)
+        self.resource_manager = resource_manager
+        self.font_manager = font_manager
+        self.card_previews = card_previews
         self.bundled_catalog = (
             Path(__file__).resolve().parent.parent / "assets" / "static" / "characters.json"
+        )
+        self.font_presets = (
+            Path(__file__).resolve().parent.parent / "static" / "fonts" / "presets.json"
         )
 
     async def overview(self) -> dict[str, object]:
@@ -138,32 +150,31 @@ class DashboardService:
 
         return await self.database.read(operation)
 
-    async def force_unbind(self, admin: str, uid: str, confirmation: str) -> dict[str, object]:
+    async def force_unbind(
+        self,
+        admin: str,
+        region_id: str,
+        uid: str,
+        confirmation: str,
+    ) -> dict[str, object]:
+        region_id = region_id.strip()
         uid = uid.strip()
-        if not uid or confirmation.strip() != uid:
-            raise DashboardError("必须完整输入要解绑的 UID 进行确认")
+        account_key = f"{region_id}/{uid}"
+        if not region_id or not uid or confirmation.strip() != account_key:
+            raise DashboardError("必须完整输入“区服/UID”进行确认")
 
         def operation(db: sqlite3.Connection) -> dict[str, object]:
-            rows = db.execute(
+            row = db.execute(
                 "SELECT g.qq_id, g.credential_id, p.profile_id "
                 "FROM game_accounts g LEFT JOIN profiles p ON p.qq_id = g.qq_id "
-                "AND p.region_id = g.region_id AND p.uid = g.uid WHERE g.uid = ? "
-                "ORDER BY g.region_id",
-                (uid,),
-            ).fetchall()
-            if not rows:
-                raise DashboardError("UID 不存在")
-            if len(rows) > 1:
-                raise DashboardError("该 UID 存在于多个区服，请等待后台按区服解绑功能升级")
-            row = rows[0]
+                "AND p.region_id = g.region_id AND p.uid = g.uid "
+                "WHERE g.region_id = ? AND g.uid = ? LIMIT 1",
+                (region_id, uid),
+            ).fetchone()
+            if row is None:
+                raise DashboardError("指定区服中的 UID 不存在")
             qq_id = str(row["qq_id"])
             credential_id = int(row["credential_id"])
-            region_id = str(
-                db.execute(
-                    "SELECT region_id FROM game_accounts WHERE uid = ? AND qq_id = ? LIMIT 1",
-                    (uid, qq_id),
-                ).fetchone()["region_id"]
-            )
             db.execute(
                 "DELETE FROM game_accounts WHERE region_id = ? AND uid = ?",
                 (region_id, uid),
@@ -204,7 +215,7 @@ class DashboardService:
             ).fetchone()
             if used is None:
                 db.execute("DELETE FROM credentials WHERE credential_id = ?", (credential_id,))
-            self._audit(db, admin, "force_unbind", f"UID {uid}", "success")
+            self._audit(db, admin, "force_unbind", account_key, "success")
             return {
                 "uid": uid,
                 "region_id": region_id,
@@ -297,6 +308,13 @@ class DashboardService:
         override = self.paths.cache_static_data / "characters.json"
         selected = override if override.is_file() else self.bundled_catalog
         payload = await asyncio.to_thread(_read_json, selected)
+        managed = (
+            await self.resource_manager.status()
+            if self.resource_manager is not None
+            else {"count": 0, "bytes": 0, "referenced": 0, "limit_bytes": 0}
+        )
+        fonts = await self.font_manager.list_fonts() if self.font_manager is not None else ()
+        default_font = next((item for item in fonts if item.is_default), None)
         return {
             "source": "runtime" if selected == override else "bundled",
             "schema_version": payload.get("schema_version"),
@@ -307,6 +325,11 @@ class DashboardService:
             ),
             "card_cache": await asyncio.to_thread(_directory_stats, self.paths.media_cards),
             "temp": await asyncio.to_thread(_directory_stats, self.paths.media_temp),
+            "managed_images": managed,
+            "fonts": {
+                "count": len(fonts),
+                "default": default_font.display_name if default_font is not None else None,
+            },
             "can_rollback": (self.paths.cache_static_data / "characters.previous.json").is_file()
             or override.is_file(),
         }
@@ -379,12 +402,98 @@ class DashboardService:
         removed = await asyncio.to_thread(
             _clear_files, (self.paths.media_temp, self.paths.media_cards)
         )
+        managed = (
+            await self.resource_manager.cleanup()
+            if self.resource_manager is not None
+            else {"removed_files": 0, "removed_bytes": 0, "remaining_bytes": 0}
+        )
         await self.database.write(
             lambda db: self._audit(
                 db, admin, "cleanup_cache", "render-and-temp", f"removed:{removed}"
             )
         )
-        return {"removed": removed, "status": await self.resource_status()}
+        return {
+            "removed": removed + managed["removed_files"],
+            "managed": managed,
+            "status": await self.resource_status(),
+        }
+
+    async def fonts_snapshot(self) -> dict[str, object]:
+        if self.font_manager is None:
+            raise DashboardError("字体管理服务尚未初始化")
+        presets = await asyncio.to_thread(_read_json, self.font_presets)
+        fonts = await self.font_manager.list_fonts()
+        return {
+            "presets": presets.get("presets", []),
+            "items": [_font_payload(item) for item in fonts],
+            "default_font_id": next((item.font_id for item in fonts if item.is_default), None),
+        }
+
+    async def install_font(
+        self,
+        admin: str,
+        url: str,
+        display_name: str,
+        make_default: bool,
+    ) -> dict[str, object]:
+        if self.font_manager is None:
+            raise DashboardError("字体管理服务尚未初始化")
+        url = url.strip()
+        display_name = display_name.strip()
+        if not url or len(url) > 2048:
+            raise DashboardError("字体下载地址无效")
+        if len(display_name) > 120:
+            raise DashboardError("字体显示名称过长")
+        installed = await self.font_manager.install_from_url(
+            url,
+            display_name=display_name or None,
+            make_default=make_default,
+        )
+        await self.database.write(
+            lambda db: self._audit(
+                db,
+                admin,
+                "font_install",
+                f"fonts:{len(installed)}",
+                "success",
+            )
+        )
+        return await self.fonts_snapshot()
+
+    async def set_default_font(self, admin: str, font_id: str) -> dict[str, object]:
+        if self.font_manager is None:
+            raise DashboardError("字体管理服务尚未初始化")
+        selected = await self.font_manager.set_default(font_id.strip())
+        await self.database.write(
+            lambda db: self._audit(db, admin, "font_default", selected.display_name, "success")
+        )
+        await asyncio.to_thread(remove_all_cards, self.paths.media_cards)
+        return await self.fonts_snapshot()
+
+    async def delete_font(self, admin: str, font_id: str, confirmation: str) -> dict[str, object]:
+        if self.font_manager is None:
+            raise DashboardError("字体管理服务尚未初始化")
+        if confirmation.strip() != "删除字体":
+            raise DashboardError("请输入“删除字体”进行确认")
+        await self.font_manager.delete(font_id.strip())
+        await self.database.write(
+            lambda db: self._audit(db, admin, "font_delete", font_id[:12], "success")
+        )
+        return await self.fonts_snapshot()
+
+    async def card_preview(self, kind: str) -> dict[str, object]:
+        if self.card_previews is None:
+            raise DashboardError("卡片预览服务尚未初始化")
+        path = await self.card_previews.render(kind.strip())
+        data = await asyncio.to_thread(path.read_bytes)
+        if len(data) > 32 * 1024 * 1024:
+            raise DashboardError("卡片预览文件过大")
+        return {
+            "kind": kind,
+            "data_uri": f"data:image/png;base64,{base64.b64encode(data).decode('ascii')}",
+            "bytes": len(data),
+            "kinds": self.card_previews.kinds,
+        }
 
     async def audit(self, limit: int = 200) -> list[dict[str, object]]:
         limit = min(1000, max(1, limit))
@@ -525,6 +634,18 @@ def _numeric_id(value: object, label: str) -> str:
 
 def _mask_qq(value: str) -> str:
     return value if len(value) <= 4 else f"{value[:2]}{'*' * (len(value) - 4)}{value[-2:]}"
+
+
+def _font_payload(item: FontEntry) -> dict[str, object]:
+    return {
+        "font_id": item.font_id,
+        "display_name": item.display_name,
+        "source_url": item.source_url,
+        "weight": item.weight,
+        "style": item.style,
+        "is_default": item.is_default,
+        "installed_at": item.installed_at,
+    }
 
 
 def _json_value(value: object) -> object:

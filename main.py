@@ -23,7 +23,7 @@ from .infrastructure.database import Database
 from .infrastructure.http import HttpClient
 from .infrastructure.network import SafeHttpDownloader
 from .infrastructure.storage import RuntimePaths
-from .presentation.cards import AstrBotCardRenderer, CardAssetPreparer
+from .presentation.cards import AstrBotCardRenderer, CardAssetPreparer, CardPreviewService
 from .presentation.resources import FontManager, ResourceManager, UiAssetManifest
 from .repositories.accounts import AccountError, AccountRepository
 from .repositories.local_data import LocalDataError, LocalDataRepository
@@ -141,6 +141,31 @@ class WuWaGlobalServerPlugin(Star):
                 "回滚角色资源",
             ),
             ("dashboard/cache/cleanup", self.dashboard_web.cleanup_cache, ["POST"], "清理渲染缓存"),
+            ("dashboard/fonts", self.dashboard_web.fonts, ["GET"], "读取字体列表"),
+            (
+                "dashboard/fonts/install",
+                self.dashboard_web.install_font,
+                ["POST"],
+                "下载并安装字体",
+            ),
+            (
+                "dashboard/fonts/default",
+                self.dashboard_web.set_default_font,
+                ["POST"],
+                "切换默认字体",
+            ),
+            (
+                "dashboard/fonts/delete",
+                self.dashboard_web.delete_font,
+                ["POST"],
+                "删除字体",
+            ),
+            (
+                "dashboard/cards/preview",
+                self.dashboard_web.card_preview,
+                ["GET"],
+                "生成卡片预览",
+            ),
             ("dashboard/audit", self.dashboard_web.audit, ["GET"], "读取管理员审计"),
             ("dashboard/backup/export", self.dashboard_web.export_backup, ["GET"], "导出插件备份"),
             (
@@ -242,6 +267,9 @@ class WuWaGlobalServerPlugin(Star):
             self._apply_catalog,
             self._fetch_catalog,
             lambda: bool(self.sync_service is not None and self.sync_service.auto_sync_running),
+            self.resource_manager,
+            self.font_manager,
+            CardPreviewService(self.card_renderer, self.ui_assets),
         )
         try:
             await self.public_login.start()
