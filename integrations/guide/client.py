@@ -17,6 +17,7 @@ from ...domain.sync import (
     GuideUnavailableError,
 )
 from ...infrastructure.network import HttpClient
+from .._guide_http import guide_headers, is_json_response
 
 _BASES = ("https://guide-server.aki-game.net", "https://guide-server-1.aki-game.net")
 _MAX_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -179,17 +180,22 @@ class GlobalGuideClient:
         session = self.http.session
         if session is None or session.closed:
             raise GuideUnavailableError("HTTP 客户端尚未初始化")
-        headers = {"x-language": language, "Accept-Language": language}
-        if token:
-            headers["x-token"] = token
+        headers = guide_headers(language, token)
         last_error: Exception | None = None
         for index, base in enumerate(_BASES):
             try:
                 async with session.request(
                     method, f"{base}{path}", headers=headers, json=body
                 ) as response:
-                    if response.status in {401, 403}:
+                    if response.status == 401 or (
+                        response.status == 403 and is_json_response(response.headers)
+                    ):
                         raise GuideAuthenticationError("攻略站登录状态失效，请重新登录")
+                    if response.status == 403:
+                        last_error = GuideUnavailableError("攻略站边缘节点拒绝了当前请求")
+                        if index + 1 < len(_BASES):
+                            continue
+                        raise last_error
                     if response.status >= 500 and index + 1 < len(_BASES):
                         continue
                     if response.status != 200:

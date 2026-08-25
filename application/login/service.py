@@ -529,7 +529,8 @@ class LoginSessionService:
         if not identity_hmac:
             raise LoginSessionError("登录账号标识缺失，请重新发起登录")
         credential = db.execute(
-            "SELECT credential_id, qq_id FROM credentials WHERE account_identity_hmac = ?",
+            "SELECT credential_id, qq_id, encrypted_tokens, guide_token_status "
+            "FROM credentials WHERE account_identity_hmac = ?",
             (identity_hmac,),
         ).fetchone()
         if credential is not None and str(credential["qq_id"]) != qq_id:
@@ -554,6 +555,20 @@ class LoginSessionService:
             "VALUES (?, 'local', NULL, NULL, ?)",
             (qq_id, now),
         )
+        if credential is not None and not str(sensitive.get("guide_token") or "").strip():
+            try:
+                previous = json.loads(
+                    self.cipher.decrypt_text(str(credential["encrypted_tokens"] or ""))
+                )
+            except (CryptoError, TypeError, ValueError, json.JSONDecodeError):
+                previous = None
+            if isinstance(previous, dict):
+                previous_token = str(previous.get("guide_token") or "").strip()
+                previous_status = str(credential["guide_token_status"] or "unknown")
+                if previous_token:
+                    sensitive["guide_token"] = previous_token
+                    if previous_status in {"unknown", "valid", "needs_login", "invalid"}:
+                        guide_status = previous_status
         encrypted_tokens = self.cipher.encrypt_text(
             json.dumps(sensitive, ensure_ascii=False, separators=(",", ":"))
         )
