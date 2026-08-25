@@ -3,7 +3,7 @@ display_name: 鸣潮国际服数据工具
 short_desc: 国际服账号绑定、角色同步、本地档案与图片查询
 desc: |
     鸣潮国际服邮箱登录、多 UID 绑定、攻略站角色同步、纯本地档案、图片查询与 Dashboard 管理。
-version: 0.5.0
+version: 0.6.0
 author: conFess233
 repo: https://github.com/conFess233/astrbot_plugin_wuwa_globlesever_tool
 astrbot_version: ">=4.24.2,<5"
