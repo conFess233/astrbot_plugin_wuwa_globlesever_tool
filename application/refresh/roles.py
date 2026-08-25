@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import logging
 import random
 import sqlite3
 from collections.abc import Awaitable, Callable
@@ -18,16 +19,24 @@ from ...domain.sync import (
     GuideError,
     GuideRoleDetail,
     GuideSyncClient,
+    GuideSyncPlayer,
     GuideUnavailableError,
     SyncedCharacter,
     SyncResult,
 )
 from ...infrastructure.database import Database
 from ...infrastructure.security import CryptoError, TokenCipher
+from ...integrations.regions import regions_equivalent
 from ..settings import PluginSettings
 from .coordinator import SingleFlightCoordinator
+from .credentials import (
+    CredentialRefreshAuthenticationError,
+    CredentialRefreshService,
+    CredentialRefreshUnavailableError,
+)
 
 _T = TypeVar("_T")
+logger = logging.getLogger(__name__)
 _LANGUAGE_MAP = {
     "zh-CN": "zh-Hans",
     "zh-TW": "zh-Hant",
@@ -72,6 +81,7 @@ class GuideSyncService:
         catalog: CharacterCatalog,
         settings: PluginSettings,
         credential_invalidated: Callable[[str, str], Awaitable[None]] | None = None,
+        credential_refresher: CredentialRefreshService | None = None,
     ):
         self.database = database
         self.cipher = cipher
@@ -79,6 +89,7 @@ class GuideSyncService:
         self.catalog = catalog
         self.settings = settings
         self.credential_invalidated = credential_invalidated
+        self.credential_refresher = credential_refresher
         self._global_gate = asyncio.Semaphore(settings.sync_concurrency)
         self._singleflight = SingleFlightCoordinator[SyncResult]()
         self._auto_task: asyncio.Task[None] | None = None
@@ -156,12 +167,24 @@ class GuideSyncService:
                 json.JSONDecodeError,
             ) as exc:
                 await self._mark_failure(context, "failed", "invalid_data")
-                raise SyncError("攻略站数据校验失败，已保留上次同步数据") from exc
+                logger.warning(
+                    "攻略站同步数据校验失败：uid=%s region=%s error=%s",
+                    context.uid,
+                    context.region_id,
+                    type(exc).__name__,
+                    exc_info=True,
+                )
+                raise SyncError(self._validation_error_message(exc)) from exc
 
     async def _fetch_and_normalize(
         self, context: _SyncContext
     ) -> tuple[tuple[GuideAvatar, ...], tuple[SyncedCharacter, ...]]:
-        sensitive = json.loads(self.cipher.decrypt_text(context.encrypted_tokens))
+        try:
+            sensitive = json.loads(self.cipher.decrypt_text(context.encrypted_tokens))
+        except (CryptoError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise GuideAuthenticationError("本地登录凭据无法读取，请重新登录") from exc
+        if not isinstance(sensitive, dict):
+            raise GuideAuthenticationError("本地登录凭据格式无效，请重新登录")
         token = str(sensitive.get("guide_token") or "")
         if not token:
             token = await self._refresh_guide_token(context, sensitive)
@@ -170,10 +193,15 @@ class GuideSyncService:
         except GuideAuthenticationError:
             token = await self._refresh_guide_token(context, sensitive)
             players = await self._retry(lambda: self.client.players(token, context.language))
-        player = next((item for item in players if item.uid == context.uid), None)
-        if player is None or player.region_id != context.region_id:
-            raise GuideError("攻略站账号中未找到绑定的 UID")
-        await self.client.choose_player(token, context.language, context.uid, context.region_id)
+        player = self._select_guide_player(players, context)
+        await self._retry(
+            lambda: self.client.choose_player(
+                token,
+                context.language,
+                context.uid,
+                player.region_id,
+            )
+        )
         avatars = await self._retry(lambda: self.client.avatars(token, context.language))
         owned = tuple(avatar for avatar in avatars if avatar.is_acquired)
         role_gate = asyncio.Semaphore(self.settings.role_detail_concurrency)
@@ -192,6 +220,40 @@ class GuideSyncService:
             if unfinished:
                 await asyncio.gather(*unfinished, return_exceptions=True)
         return avatars, characters
+
+    @staticmethod
+    def _select_guide_player(
+        players: tuple[GuideSyncPlayer, ...],
+        context: _SyncContext,
+    ) -> GuideSyncPlayer:
+        """使用攻略站自己的 serverId 选择玩家，同时避免同 UID 跨区服串号。"""
+
+        uid_matches = tuple(player for player in players if player.uid == context.uid)
+        exact = next(
+            (
+                player
+                for player in uid_matches
+                if regions_equivalent(player.region_id, context.region_id)
+            ),
+            None,
+        )
+        if exact is not None:
+            return exact
+        if not uid_matches:
+            raise GuideError("攻略站账号中未找到绑定的 UID")
+        raise GuideError("攻略站账号中存在相同 UID，但所属区服与当前账号不一致")
+
+    @staticmethod
+    def _validation_error_message(exc: Exception) -> str:
+        if isinstance(exc, (GuideError, CatalogError)):
+            detail = " ".join(str(exc).split()).strip("；。 ")
+            if detail:
+                return f"攻略站数据校验失败：{detail[:120]}；已保留上次同步数据"
+        if isinstance(exc, KeyError):
+            return "攻略站数据校验失败：响应缺少必要字段；已保留上次同步数据"
+        if isinstance(exc, TypeError):
+            return "攻略站数据校验失败：响应字段结构不兼容；已保留上次同步数据"
+        return "攻略站数据校验失败，已保留上次同步数据"
 
     async def _load_role(self, token: str, language: str, avatar: GuideAvatar) -> SyncedCharacter:
         definition = self.catalog.resolve(avatar.role_id)
@@ -213,12 +275,22 @@ class GuideSyncService:
             )
             if detail is None:
                 continue
-            selected = selected or detail
-            if detail.chain is not None:
-                selected = detail
-                break
+            selected = detail
+            break
         if selected is None:
-            raise GuideError(f"角色 {avatar.role_id} 的所有攻略方案均未返回详情")
+            return SyncedCharacter(
+                avatar.role_id,
+                definition.display_name,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                avatar.source_order,
+            )
         if selected.chain is not None and not 0 <= selected.chain <= 6:
             raise GuideError(f"角色 {avatar.role_id} 的共鸣链超出范围")
         if selected.weapon_present is True and not selected.weapon_id:
@@ -243,21 +315,84 @@ class GuideSyncService:
         c_uid = str(sensitive.get("c_uid") or "")
         c_name = str(sensitive.get("c_name") or c_uid)
         access_token = str(sensitive.get("access_token") or "")
-        if not c_uid or not access_token:
+        if not c_uid:
             raise GuideAuthenticationError("刷新攻略站登录状态所需凭据缺失")
-        token = await self.client.login(c_uid, c_name, access_token, context.language)
-        sensitive["guide_token"] = token
-        encrypted = self.cipher.encrypt_text(
-            json.dumps(sensitive, ensure_ascii=False, separators=(",", ":"))
-        )
-        await self.database.write(
-            lambda db: db.execute(
-                "UPDATE credentials SET encrypted_tokens = ?, guide_token_status = 'valid', "
-                "updated_at = ? WHERE credential_id = ?",
-                (encrypted, _iso(), context.credential_id),
+        renewed = False
+        if not access_token:
+            access_token = await self._renew_sdk_session(context, sensitive)
+            renewed = True
+        try:
+            token = await self._retry(
+                lambda: self.client.login(c_uid, c_name, access_token, context.language)
             )
-        )
+        except GuideAuthenticationError:
+            if renewed:
+                raise
+            access_token = await self._renew_sdk_session(context, sensitive)
+            renewed = True
+            token = await self._retry(
+                lambda: self.client.login(c_uid, c_name, access_token, context.language)
+            )
+        updates = {"guide_token": token}
+        if renewed:
+            updates.update(
+                {
+                    "auto_token": sensitive.get("auto_token"),
+                    "access_token": sensitive.get("access_token"),
+                    "oauth_code": sensitive.get("oauth_code"),
+                }
+            )
+
+        def operation(db: sqlite3.Connection) -> None:
+            row = db.execute(
+                "SELECT encrypted_tokens FROM credentials "
+                "WHERE credential_id = ? AND revoked_at IS NULL",
+                (context.credential_id,),
+            ).fetchone()
+            if row is None:
+                raise GuideAuthenticationError("刷新攻略站登录状态所需凭据已失效")
+            try:
+                current = json.loads(self.cipher.decrypt_text(str(row["encrypted_tokens"])))
+            except (CryptoError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise GuideAuthenticationError("刷新攻略站登录状态所需凭据已失效") from exc
+            if not isinstance(current, dict):
+                raise GuideAuthenticationError("刷新攻略站登录状态所需凭据已失效")
+            current.update(updates)
+            encrypted = self.cipher.encrypt_text(
+                json.dumps(current, ensure_ascii=False, separators=(",", ":"))
+            )
+            updated = db.execute(
+                "UPDATE credentials SET encrypted_tokens = ?, guide_token_status = 'valid', "
+                "updated_at = ? WHERE credential_id = ? AND revoked_at IS NULL",
+                (encrypted, _iso(), context.credential_id),
+            ).rowcount
+            if updated != 1:
+                raise GuideAuthenticationError("刷新攻略站登录状态所需凭据已失效")
+
+        await self.database.write(operation)
         return token
+
+    async def _renew_sdk_session(
+        self,
+        context: _SyncContext,
+        sensitive: dict[str, object],
+    ) -> str:
+        if self.credential_refresher is None:
+            raise GuideAuthenticationError("刷新攻略站登录状态所需凭据已失效")
+        try:
+            refreshed = await self.credential_refresher.refresh(context.credential_id)
+        except CredentialRefreshUnavailableError as exc:
+            raise GuideUnavailableError("国际服登录续期服务暂时不可用") from exc
+        except CredentialRefreshAuthenticationError as exc:
+            raise GuideAuthenticationError("国际服自动登录状态已失效") from exc
+        sensitive.update(
+            {
+                "auto_token": refreshed.auto_token,
+                "access_token": refreshed.access_token,
+                "oauth_code": refreshed.oauth_code,
+            }
+        )
+        return refreshed.access_token
 
     async def _retry(self, operation: Callable[[], Awaitable[_T]]) -> _T:
         attempts = self.settings.request_retry_count + 1

@@ -13,10 +13,12 @@ from ...domain.login import (
     AuthenticationUnavailableError,
     GeetestChallenge,
     GuidePlayer,
+    RefreshedSession,
     SdkLoginResult,
 )
-from ...infrastructure.network import HttpClient
-from .._guide_http import guide_headers, is_json_response
+from ...infrastructure.network import HttpClient, ResponseTooLargeError, read_limited_response
+from .._guide_http import guide_headers, is_json_response, kuro_headers
+from ..regions import canonical_region, region_display_name
 from .sdk_crypto import SdkEncodingError, encode_password, generate_signature
 
 _SDK_BASE = "https://sdkapi.kurogame-service.com"
@@ -25,6 +27,7 @@ _GUIDE_BASES = (
     "https://guide-server-1.aki-game.net",
 )
 _EMAIL_LOGIN_PATH = "/sdkcom/v2/login/emailPwd.lg"
+_AUTO_LOGIN_PATH = "/sdkcom/v2/login/auto.lg"
 _GET_TOKEN_PATH = "/sdkcom/v2/auth/getToken.lg"
 _GENERATE_PATH = "/sdkcom/v2/user/oauth/code/generate.lg"
 _PLAYER_INFO_URL = "https://pc-launcher-sdk-api.kurogame.net/game/queryPlayerInfo"
@@ -138,6 +141,28 @@ class GlobalAuthClient:
             guide_status=guide_status,
         )
 
+    async def refresh_session(self, auto_token: str, device_id: str) -> RefreshedSession:
+        fields = {
+            "token": auto_token,
+            "client_id": _CLIENT_ID,
+            "deviceNum": device_id,
+            "sdkVersion": _SDK_VERSION,
+            "productId": "A1730",
+            "projectId": _PROJECT_ID,
+            "redirect_uri": "1",
+            "response_type": "code",
+            "channelId": "171",
+        }
+        fields["sign"] = generate_signature(fields)
+        payload = await self._sdk_form(_AUTO_LOGIN_PATH, fields)
+        if self._integer(payload.get("codes"), default=-1) != 0:
+            raise AuthenticationError("国际服自动登录状态已失效")
+        code = self._required_text(payload, "code", "自动登录响应缺少授权码")
+        refreshed_auto_token = self._optional_text(payload.get("autoToken")) or auto_token
+        access_token = await self._get_access_token(code, device_id)
+        oauth_code = await self._generate_oauth(access_token, device_id)
+        return RefreshedSession(refreshed_auto_token, access_token, oauth_code)
+
     async def _game_players(self, oauth_code: str) -> tuple[GuidePlayer, ...]:
         try:
             payload = await self.http.post_json(
@@ -145,6 +170,7 @@ class GlobalAuthClient:
                 {"oauthCode": oauth_code},
                 allowed_hosts=_PLAYER_INFO_HOSTS,
                 max_bytes=_MAX_RESPONSE_BYTES,
+                headers=kuro_headers(),
             )
         except (
             aiohttp.ClientError,
@@ -177,7 +203,7 @@ class GlobalAuthClient:
                     uid=uid,
                     player_name=self._optional_text(raw.get("roleName")),
                     region_id=region,
-                    region_name=region,
+                    region_name=region_display_name(region),
                     level=self._integer(raw.get("level"), default=None),
                 )
             )
@@ -188,7 +214,9 @@ class GlobalAuthClient:
         game_players: tuple[GuidePlayer, ...],
         guide_players: tuple[GuidePlayer, ...],
     ) -> tuple[GuidePlayer, ...]:
-        guide_map = {(player.region_id, player.uid): player for player in guide_players}
+        guide_map = {
+            (canonical_region(player.region_id), player.uid): player for player in guide_players
+        }
         return tuple(
             GuidePlayer(
                 uid=player.uid,
@@ -200,7 +228,7 @@ class GlobalAuthClient:
                 level=(guide.level if guide and guide.level is not None else player.level),
             )
             for player in game_players
-            for guide in (guide_map.get((player.region_id, player.uid)),)
+            for guide in (guide_map.get((canonical_region(player.region_id), player.uid)),)
         )
 
     async def _get_access_token(self, code: str, device_id: str) -> str:
@@ -262,8 +290,10 @@ class GlobalAuthClient:
             token=token,
         )
         raw_players = payload.get("data")
+        if raw_players is None:
+            return ()
         if not isinstance(raw_players, list):
-            raise AuthenticationError("攻略站玩家列表响应不完整")
+            raise AuthenticationUnavailableError("攻略站玩家列表响应格式无效")
         result: list[GuidePlayer] = []
         for raw in raw_players:
             if not isinstance(raw, dict):
@@ -289,6 +319,7 @@ class GlobalAuthClient:
             async with session.post(
                 f"{_SDK_BASE}{path}",
                 data=fields,
+                headers=kuro_headers(),
                 allow_redirects=False,
             ) as response:
                 if response.status >= 500:
@@ -310,6 +341,8 @@ class GlobalAuthClient:
     ) -> dict[str, Any]:
         session = self._session()
         headers = guide_headers(language, token)
+        if json_body is not None:
+            headers["Content-Type"] = "application/json;charset=UTF-8"
         last_error: Exception | None = None
         for index, base in enumerate(_GUIDE_BASES):
             try:
@@ -335,10 +368,10 @@ class GlobalAuthClient:
                         raise AuthenticationUnavailableError("攻略站服务暂时不可用")
                     payload = await self._read_json(response)
                     code = self._integer(payload.get("code"), default=-1)
-                    if code in {401, 403, 1000}:
+                    if code in {401, 403}:
                         raise AuthenticationError("攻略站登录状态无效")
                     if code != 200:
-                        raise AuthenticationError("攻略站拒绝了账号请求")
+                        raise AuthenticationUnavailableError("攻略站拒绝了账号请求")
                     return payload
             except AuthenticationError:
                 raise
@@ -356,9 +389,10 @@ class GlobalAuthClient:
 
     @staticmethod
     async def _read_json(response: aiohttp.ClientResponse) -> dict[str, Any]:
-        content = await response.read()
-        if len(content) > _MAX_RESPONSE_BYTES:
-            raise AuthenticationUnavailableError("上游响应过大")
+        try:
+            content = await read_limited_response(response, _MAX_RESPONSE_BYTES)
+        except ResponseTooLargeError as exc:
+            raise AuthenticationUnavailableError("上游响应过大") from exc
         try:
             payload = json.loads(content)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:

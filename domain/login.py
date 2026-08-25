@@ -63,6 +63,13 @@ class AuthenticatedAccount:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class RefreshedSession:
+    auto_token: str
+    access_token: str
+    oauth_code: str
+
+
 class AuthClient(Protocol):
     @staticmethod
     def new_device_id() -> str: ...
@@ -81,6 +88,12 @@ class AuthClient(Protocol):
         device_id: str,
         language: str = "zh-Hans",
     ) -> AuthenticatedAccount: ...
+
+    async def refresh_session(
+        self,
+        auto_token: str,
+        device_id: str,
+    ) -> RefreshedSession: ...
 
 
 @dataclass(frozen=True, slots=True)

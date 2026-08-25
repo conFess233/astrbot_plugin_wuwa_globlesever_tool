@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
@@ -14,7 +15,12 @@ from .application.admin.export import BackupService
 from .application.cards import CardService
 from .application.commands import CommandService, CommandServiceError
 from .application.login import LoginSessionError, LoginSessionService
-from .application.refresh import GuideSyncService, PlayerDataService, SyncError
+from .application.refresh import (
+    CredentialRefreshService,
+    GuideSyncService,
+    PlayerDataService,
+    SyncError,
+)
 from .application.settings import PluginSettings
 from .constants import PLUGIN_DISPLAY_NAME, PLUGIN_NAME, PLUGIN_VERSION
 from .domain.cards import CardMessage
@@ -31,6 +37,7 @@ from .infrastructure.database.repositories import (
 from .infrastructure.network import HttpClient, SafeHttpDownloader
 from .infrastructure.security import MasterKeyProvider, TokenCipher
 from .infrastructure.storage import RuntimePaths, remove_all_cards
+from .integrations._guide_http import guide_headers
 from .integrations.astrbot import mentioned_users, plain_text
 from .integrations.guide import GlobalGuideClient
 from .integrations.kuro import GlobalAuthClient
@@ -65,6 +72,7 @@ class WuWaGlobalServerPlugin(Star):
         self.repository: LocalDataRepository | None = None
         self.accounts: AccountRepository | None = None
         self.login_sessions: LoginSessionService | None = None
+        self.credential_refresher: CredentialRefreshService | None = None
         self.sync_service: GuideSyncService | None = None
         self.player_data: PlayerDataService | None = None
         self.card_renderer: AstrBotCardRenderer | None = None
@@ -212,11 +220,17 @@ class WuWaGlobalServerPlugin(Star):
             self.database,
             self.paths.media_cards,
         )
+        auth_client = GlobalAuthClient(self.http)
         self.login_sessions = LoginSessionService(
             self.database,
             self.cipher,
-            GlobalAuthClient(self.http),
+            auth_client,
             self.settings,
+        )
+        self.credential_refresher = CredentialRefreshService(
+            self.database,
+            self.cipher,
+            auth_client,
         )
         self.sync_service = GuideSyncService(
             self.database,
@@ -225,6 +239,7 @@ class WuWaGlobalServerPlugin(Star):
             self.catalog,
             self.settings,
             self._on_credential_invalidated,
+            self.credential_refresher,
         )
         self.player_data = PlayerDataService(
             self.database,
@@ -232,6 +247,7 @@ class WuWaGlobalServerPlugin(Star):
             self.http,
             self.settings,
             self.paths.snapshots_raw,
+            self.credential_refresher,
         )
         self.card_renderer = AstrBotCardRenderer(
             self.plugin_root / "static" / "cards" / "wuwa_card.html",
@@ -373,11 +389,20 @@ class WuWaGlobalServerPlugin(Star):
         )
 
     async def _fetch_catalog(self) -> object:
-        return await self.http.get_json(
-            "https://guide-server.aki-game.net/role/avatar/list",
-            allowed_hosts={"guide-server.aki-game.net"},
-            max_bytes=4 * 1024 * 1024,
-        )
+        ordered_hosts = ("guide-server.aki-game.net", "guide-server-1.aki-game.net")
+        allowed_hosts = set(ordered_hosts)
+        last_error: Exception | None = None
+        for host in ordered_hosts:
+            try:
+                return await self.http.get_json(
+                    f"https://{host}/role/avatar/list",
+                    allowed_hosts=allowed_hosts,
+                    max_bytes=4 * 1024 * 1024,
+                    headers=guide_headers("zh-Hans"),
+                )
+            except (aiohttp.ClientError, OSError, RuntimeError, ValueError) as exc:
+                last_error = exc
+        raise RuntimeError("无法从国际服攻略站更新角色目录") from last_error
 
     async def _persist_config(self) -> None:
         saver = getattr(self.config, "save_config_async", None)
@@ -566,6 +591,10 @@ class WuWaGlobalServerPlugin(Star):
         await self.dashboard_web.close()
         if self.sync_service is not None:
             await self.sync_service.close()
+        if self.player_data is not None:
+            await self.player_data.close()
+        if self.credential_refresher is not None:
+            await self.credential_refresher.close()
         await self.safe_downloader.close()
         await self.http.close()
         await self.database.close()
@@ -573,6 +602,7 @@ class WuWaGlobalServerPlugin(Star):
         self.repository = None
         self.accounts = None
         self.login_sessions = None
+        self.credential_refresher = None
         self.sync_service = None
         self.player_data = None
         self.card_renderer = None

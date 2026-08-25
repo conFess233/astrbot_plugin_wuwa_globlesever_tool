@@ -16,8 +16,15 @@ from ...domain.player import PlayerDataError, PlayerSnapshot
 from ...infrastructure.database import Database
 from ...infrastructure.network import HttpClient
 from ...infrastructure.security import CryptoError, TokenCipher
+from ...integrations._guide_http import kuro_headers
+from ...integrations.regions import regions_equivalent
 from ..settings import PluginSettings
 from .coordinator import SingleFlightCoordinator
+from .credentials import (
+    CredentialRefreshAuthenticationError,
+    CredentialRefreshService,
+    CredentialRefreshUnavailableError,
+)
 
 _PLAYER_INFO_URL = "https://pc-launcher-sdk-api.kurogame.net/game/queryPlayerInfo"
 _ROLE_URL = "https://pc-launcher-sdk-api.kurogame.net/game/queryRole"
@@ -29,12 +36,17 @@ class _PlayerAuthenticationError(PlayerDataError):
     """表示游戏接口明确拒绝当前 OAuthCode。"""
 
 
+class _PlayerSessionRejected(PlayerDataError):
+    """表示游戏接口拒绝当前会话，可尝试使用 autoToken 续期。"""
+
+
 @dataclass(frozen=True, slots=True)
 class _Context:
     qq_id: str
     uid: str
     region_id: str
     region_name: str
+    credential_id: int
     encrypted_tokens: str
 
 
@@ -46,13 +58,18 @@ class PlayerDataService:
         http: HttpClient,
         settings: PluginSettings,
         raw_snapshot_directory: Path | None = None,
+        credential_refresher: CredentialRefreshService | None = None,
     ):
         self.database = database
         self.cipher = cipher
         self.http = http
         self.settings = settings
         self.raw_snapshot_directory = raw_snapshot_directory
+        self.credential_refresher = credential_refresher
         self._singleflight = SingleFlightCoordinator[PlayerSnapshot]()
+
+    async def close(self) -> None:
+        await self._singleflight.wait()
 
     async def query(
         self,
@@ -146,32 +163,31 @@ class PlayerDataService:
         )
 
     async def _refresh(self, context: _Context) -> PlayerSnapshot:
-        sensitive = json.loads(self.cipher.decrypt_text(context.encrypted_tokens))
-        oauth_code = str(sensitive.get("oauth_code") or "").strip()
-        if not oauth_code:
-            await self._mark_game_auth_invalid(context)
-            raise _PlayerAuthenticationError("游戏接口授权信息缺失，请重新执行 /kh 登录")
-
         await self._mark_refresh(context, "attempt")
         try:
+            try:
+                sensitive = json.loads(self.cipher.decrypt_text(context.encrypted_tokens))
+            except (CryptoError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise _PlayerAuthenticationError("本地登录凭据无法读取") from exc
+            if not isinstance(sensitive, dict):
+                raise _PlayerAuthenticationError("本地登录凭据格式无效")
+            oauth_code = str(sensitive.get("oauth_code") or "").strip()
+            if not oauth_code:
+                oauth_code = await self._renew_session(context)
             async with asyncio.timeout(self.settings.player_refresh_timeout_seconds):
-                player_response = await self._retry_post(
-                    _PLAYER_INFO_URL,
-                    {"oauthCode": oauth_code},
-                )
-                region_id, player = self._select_player(
-                    player_response,
-                    context.uid,
-                    context.region_id,
-                )
-                role_response = await self._retry_post(
-                    _ROLE_URL,
-                    {
-                        "oauthCode": oauth_code,
-                        "playerId": int(context.uid),
-                        "region": region_id,
-                    },
-                )
+                try:
+                    player_response, role_response, player, detail = await self._fetch_upstream(
+                        context,
+                        oauth_code,
+                    )
+                except _PlayerSessionRejected:
+                    if self.credential_refresher is None:
+                        raise
+                    oauth_code = await self._renew_session(context)
+                    player_response, role_response, player, detail = await self._fetch_upstream(
+                        context,
+                        oauth_code,
+                    )
         except _PlayerAuthenticationError:
             await self._mark_refresh(context, "failure")
             await self._mark_game_auth_invalid(context)
@@ -180,20 +196,25 @@ class PlayerDataService:
             await self._mark_refresh(context, "failure")
             raise
         try:
-            detail = self._select_role_detail(role_response, region_id)
             base = detail.get("Base")
             if not isinstance(base, dict):
                 raise ValueError("玩家详情响应缺少 Base")
+            base_uid = self._integer(base.get("Id"))
+            if base_uid is not None and str(base_uid) != context.uid:
+                raise ValueError("玩家详情响应中的 UID 与目标账号不一致")
             battle_pass = detail.get("BattlePass")
             battle_pass = battle_pass if isinstance(battle_pass, dict) else None
         except Exception:
             await self._mark_refresh(context, "failure")
             raise
         refreshed_at = datetime.now(UTC).isoformat()
+        level = self._integer(base.get("Level"))
+        if level is None:
+            level = self._integer(player.get("level"))
         values = {
             "player_name": self._text(player.get("roleName")) or self._text(base.get("Name")),
             "head_photo": self._integer(player.get("headPhoto")),
-            "level": self._integer(base.get("Level")) or self._integer(player.get("level")),
+            "level": level,
             "world_level": self._integer(base.get("WorldLevel")),
             "role_num": self._integer(base.get("RoleNum")),
             "active_days": self._integer(base.get("ActiveDays")),
@@ -280,16 +301,57 @@ class PlayerDataService:
             )
         return snapshot
 
+    async def _fetch_upstream(
+        self,
+        context: _Context,
+        oauth_code: str,
+    ) -> tuple[object, object, dict[str, object], dict[str, object]]:
+        player_response = await self._retry_post(
+            _PLAYER_INFO_URL,
+            {"oauthCode": oauth_code},
+        )
+        region_id, player = self._select_player(
+            player_response,
+            context.uid,
+            context.region_id,
+        )
+        role_response = await self._retry_post(
+            _ROLE_URL,
+            {
+                "oauthCode": oauth_code,
+                "playerId": int(context.uid),
+                "region": region_id,
+            },
+        )
+        detail = self._select_role_detail(role_response, region_id)
+        return player_response, role_response, player, detail
+
+    async def _renew_session(self, context: _Context) -> str:
+        if self.credential_refresher is None:
+            raise _PlayerAuthenticationError("游戏接口授权已失效，请重新执行 /kh 登录")
+        try:
+            refreshed = await self.credential_refresher.refresh(context.credential_id)
+        except CredentialRefreshUnavailableError as exc:
+            raise PlayerDataError("国际服登录续期服务暂时不可用") from exc
+        except CredentialRefreshAuthenticationError as exc:
+            raise _PlayerAuthenticationError("游戏接口授权已失效，请重新执行 /kh 登录") from exc
+        return refreshed.oauth_code
+
     async def _retry_post(self, url: str, body: dict[str, object]) -> object:
         attempts = self.settings.request_retry_count + 1
         for attempt in range(attempts):
             try:
-                return await self.http.post_json(
+                payload = await self.http.post_json(
                     url,
                     body,
                     allowed_hosts=_ALLOWED_HOSTS,
                     max_bytes=_MAX_RESPONSE_BYTES,
+                    headers=kuro_headers(),
                 )
+                message = str(payload.get("message") or "") if isinstance(payload, dict) else ""
+                if "retrying" not in message.casefold() or attempt + 1 >= attempts:
+                    return payload
+                await asyncio.sleep((0.35 * (2**attempt)) + random.uniform(0, 0.15))
             except _PlayerAuthenticationError:
                 raise
             except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError, ValueError):
@@ -445,7 +507,8 @@ class PlayerDataService:
                     raise PlayerDataError("该 UID 绑定了多个区服，请先切换到目标账号")
                 target_region_id = str(matches[0]["region_id"]) if matches else ""
             row = db.execute(
-                "SELECT g.uid, g.region_id, g.region_name, c.encrypted_tokens "
+                "SELECT g.uid, g.region_id, g.region_name, g.credential_id, "
+                "c.encrypted_tokens "
                 "FROM game_accounts g JOIN credentials c ON c.credential_id = g.credential_id "
                 "WHERE g.qq_id = ? AND g.region_id = ? AND g.uid = ?",
                 (qq_id, target_region_id, target_uid),
@@ -457,6 +520,7 @@ class PlayerDataService:
                 str(row["uid"]),
                 str(row["region_id"]),
                 str(row["region_name"]),
+                int(row["credential_id"]),
                 str(row["encrypted_tokens"]),
             )
 
@@ -470,19 +534,28 @@ class PlayerDataService:
         region_id: str,
     ) -> tuple[str, dict[str, object]]:
         data = cls._response_data(payload)
-        raw = data.get(region_id)
-        if raw is not None:
+        matches: list[tuple[str, dict[str, object]]] = []
+        for response_region, raw in data.items():
+            if not regions_equivalent(response_region, region_id):
+                continue
             player = cls._nested_json(raw)
             if str(player.get("roleId") or "") == uid:
-                return region_id, player
+                matches.append((response_region, player))
+        if len(matches) == 1:
+            return matches[0]
         raise ValueError("玩家信息响应中未找到目标 UID")
 
     @classmethod
     def _select_role_detail(cls, payload: object, region_id: str) -> dict[str, object]:
         data = cls._response_data(payload)
         raw = data.get(region_id)
-        if raw is None and len(data) == 1:
-            raw = next(iter(data.values()))
+        if raw is None:
+            matches = tuple(
+                value for key, value in data.items() if regions_equivalent(key, region_id)
+            )
+            if len(matches) != 1:
+                raise ValueError("玩家详情响应中未找到目标区服")
+            raw = matches[0]
         detail = cls._nested_json(raw)
         return detail
 
@@ -491,7 +564,7 @@ class PlayerDataService:
         if not isinstance(payload, dict):
             raise ValueError("国际服玩家接口响应格式无效")
         if PlayerDataService._integer(payload.get("code")) != 0:
-            raise _PlayerAuthenticationError("国际服游戏授权已失效，请重新执行 /kh 登录")
+            raise _PlayerSessionRejected("国际服游戏接口拒绝了当前数据请求")
         data = payload.get("data")
         if not isinstance(data, dict) or not data:
             raise ValueError("国际服玩家接口响应格式无效")
