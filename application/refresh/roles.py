@@ -164,7 +164,7 @@ class GuideSyncService:
         sensitive = json.loads(self.cipher.decrypt_text(context.encrypted_tokens))
         token = str(sensitive.get("guide_token") or "")
         if not token:
-            raise GuideAuthenticationError("攻略站令牌缺失")
+            token = await self._refresh_guide_token(context, sensitive)
         try:
             players = await self._retry(lambda: self.client.players(token, context.language))
         except GuideAuthenticationError:
@@ -252,7 +252,7 @@ class GuideSyncService:
         )
         await self.database.write(
             lambda db: db.execute(
-                "UPDATE credentials SET encrypted_tokens = ?, token_status = 'valid', "
+                "UPDATE credentials SET encrypted_tokens = ?, guide_token_status = 'valid', "
                 "updated_at = ? WHERE credential_id = ?",
                 (encrypted, _iso(), context.credential_id),
             )
@@ -353,7 +353,7 @@ class GuideSyncService:
             )
             if status == "needs_login":
                 db.execute(
-                    "UPDATE credentials SET token_status = 'invalid', updated_at = ? "
+                    "UPDATE credentials SET guide_token_status = 'needs_login', updated_at = ? "
                     "WHERE credential_id = ?",
                     (now, context.credential_id),
                 )
@@ -508,7 +508,7 @@ class GuideSyncService:
                 ),
             )
             db.execute(
-                "UPDATE credentials SET token_status = 'valid', last_success_at = ?, "
+                "UPDATE credentials SET guide_token_status = 'valid', last_success_at = ?, "
                 "updated_at = ? WHERE credential_id = ?",
                 (synced_at, synced_at, context.credential_id),
             )
@@ -639,7 +639,8 @@ class GuideSyncService:
                     "JOIN credentials c ON c.credential_id = g.credential_id "
                     "LEFT JOIN refresh_states r ON r.refresh_kind = 'role' "
                     "AND r.region_id = g.region_id AND r.uid = g.uid "
-                    "WHERE c.token_status = 'valid' AND c.revoked_at IS NULL "
+                    "WHERE c.guide_token_status IN ('unknown', 'valid') "
+                    "AND c.revoked_at IS NULL "
                     "AND (r.backoff_until IS NULL OR r.backoff_until <= ?) "
                     "AND (g.last_sync_success_at IS NULL OR g.last_sync_success_at < ?) "
                     "ORDER BY COALESCE(g.last_sync_success_at, '')",

@@ -112,8 +112,8 @@ class DashboardService:
                 pattern = f"%{needle}%"
                 parameters.extend((pattern, pattern, pattern, pattern))
             if token_status:
-                clauses.append("c.token_status = ?")
-                parameters.append(token_status)
+                clauses.append("(c.game_token_status = ? OR c.guide_token_status = ?)")
+                parameters.extend((token_status, token_status))
             if sync_status:
                 clauses.append("g.sync_status = ?")
                 parameters.append(sync_status)
@@ -125,7 +125,7 @@ class DashboardService:
             total = int(db.execute(f"SELECT COUNT(*){base}{where}", parameters).fetchone()[0])
             rows = db.execute(
                 "SELECT u.qq_id, u.default_region_id, u.default_uid, "
-                "c.email_masked, c.token_status, "
+                "c.email_masked, c.game_token_status, c.guide_token_status, "
                 "g.uid, g.region_id, g.region_name, g.player_name, g.sync_status, "
                 "g.last_sync_attempt_at, g.last_sync_success_at, g.last_error_category "
                 f"{base}{where} ORDER BY u.qq_id, g.region_id, g.uid LIMIT ? OFFSET ?",
@@ -517,8 +517,14 @@ class DashboardService:
             "(SELECT COUNT(*) FROM credentials) AS credentials, "
             "(SELECT COUNT(*) FROM game_accounts) AS accounts, "
             "(SELECT COUNT(*) FROM characters) AS characters, "
-            "(SELECT COUNT(*) FROM credentials WHERE token_status = 'valid') AS token_valid, "
-            "(SELECT COUNT(*) FROM credentials WHERE token_status = 'needs_login') AS needs_login, "
+            "(SELECT COUNT(*) FROM credentials WHERE game_token_status = 'valid') "
+            "AS game_token_valid, "
+            "(SELECT COUNT(*) FROM credentials WHERE guide_token_status = 'valid') "
+            "AS guide_token_valid, "
+            "(SELECT COUNT(*) FROM credentials WHERE game_token_status = 'needs_login') "
+            "AS game_needs_login, "
+            "(SELECT COUNT(*) FROM credentials WHERE guide_token_status = 'needs_login') "
+            "AS guide_needs_login, "
             "(SELECT COUNT(*) FROM game_accounts WHERE sync_status = 'failed') AS sync_failed, "
             "(SELECT MAX(last_sync_success_at) FROM game_accounts) AS last_global_sync"
         ).fetchone()

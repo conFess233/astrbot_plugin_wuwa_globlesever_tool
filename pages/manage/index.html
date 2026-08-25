@@ -58,7 +58,7 @@
         </div>
         <div id="account-filters" class="filter-grid">
           <label class="field search-field"><span>搜索</span><div class="input-with-icon"><span data-icon-host="search"></span><input id="account-query" placeholder="QQ / 邮箱 / UID / 区服"></div></label>
-          <label class="field"><span>凭据状态</span><select id="token-filter"><option value="">全部</option><option value="valid">有效</option><option value="needs_login">需登录</option><option value="invalid">失效</option></select></label>
+          <label class="field"><span>任一凭据状态</span><select id="token-filter"><option value="">全部</option><option value="unknown">待验证</option><option value="valid">有效</option><option value="needs_login">需登录</option><option value="invalid">失效</option></select></label>
           <label class="field"><span>同步状态</span><select id="sync-filter"><option value="">全部</option><option value="success">成功</option><option value="needs_login">需登录</option><option value="failed">失败</option></select></label>
           <button id="account-search" class="btn btn-primary" type="button" data-icon="search">查询</button>
         </div>

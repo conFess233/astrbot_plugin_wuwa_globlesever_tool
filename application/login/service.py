@@ -517,8 +517,11 @@ class LoginSessionService:
         try:
             sensitive = json.loads(self.cipher.decrypt_text(str(row["encrypted_pending_tokens"])))
             device_id = str(sensitive.pop("device_id"))
+            guide_status = str(sensitive.pop("guide_status", "unknown"))
         except (CryptoError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise LoginSessionError("登录临时数据损坏，请重新发起登录") from exc
+        if guide_status not in {"unknown", "valid", "needs_login", "invalid"}:
+            guide_status = "unknown"
         qq_id = str(row["requesting_qq_id"])
         origin_context = str(row["origin_context"])
         identity_hmac = str(row["email_identity_hmac"] or "")
@@ -558,14 +561,16 @@ class LoginSessionService:
         if credential is None:
             cursor = db.execute(
                 "INSERT INTO credentials (qq_id, account_identity_hmac, email_masked, "
-                "encrypted_tokens, encrypted_device_id, token_status, last_success_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, 'valid', ?, ?)",
+                "encrypted_tokens, encrypted_device_id, token_status, game_token_status, "
+                "guide_token_status, last_success_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, 'valid', 'valid', ?, ?, ?)",
                 (
                     qq_id,
                     identity_hmac,
                     email_masked,
                     encrypted_tokens,
                     encrypted_device,
+                    guide_status,
                     now,
                     now,
                 ),
@@ -575,9 +580,18 @@ class LoginSessionService:
             credential_id = int(credential["credential_id"])
             db.execute(
                 "UPDATE credentials SET email_masked = ?, encrypted_tokens = ?, "
-                "encrypted_device_id = ?, token_status = 'valid', revoked_at = NULL, "
-                "last_success_at = ?, updated_at = ? WHERE credential_id = ?",
-                (email_masked, encrypted_tokens, encrypted_device, now, now, credential_id),
+                "encrypted_device_id = ?, token_status = 'valid', game_token_status = 'valid', "
+                "guide_token_status = ?, revoked_at = NULL, last_success_at = ?, "
+                "updated_at = ? WHERE credential_id = ?",
+                (
+                    email_masked,
+                    encrypted_tokens,
+                    encrypted_device,
+                    guide_status,
+                    now,
+                    now,
+                    credential_id,
+                ),
             )
         for account in selected_accounts:
             player = player_map[(account.region_id, account.uid)]

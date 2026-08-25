@@ -46,9 +46,10 @@ class AuthenticatedAccount:
     auto_token: str | None
     access_token: str
     oauth_code: str
-    guide_token: str
+    guide_token: str | None
     device_id: str
     players: tuple[GuidePlayer, ...]
+    guide_status: str = "valid"
 
     def sensitive_payload(self) -> dict[str, str | None]:
         return {
@@ -58,6 +59,7 @@ class AuthenticatedAccount:
             "access_token": self.access_token,
             "oauth_code": self.oauth_code,
             "guide_token": self.guide_token,
+            "guide_status": self.guide_status,
         }
 
 

@@ -25,6 +25,10 @@ _ALLOWED_HOSTS = {"pc-launcher-sdk-api.kurogame.net"}
 _MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
+class _PlayerAuthenticationError(PlayerDataError):
+    """表示游戏接口明确拒绝当前 OAuthCode。"""
+
+
 @dataclass(frozen=True, slots=True)
 class _Context:
     qq_id: str
@@ -145,7 +149,8 @@ class PlayerDataService:
         sensitive = json.loads(self.cipher.decrypt_text(context.encrypted_tokens))
         oauth_code = str(sensitive.get("oauth_code") or "").strip()
         if not oauth_code:
-            raise PlayerDataError("账号授权信息缺失，请重新执行 /kh 登录")
+            await self._mark_game_auth_invalid(context)
+            raise _PlayerAuthenticationError("游戏接口授权信息缺失，请重新执行 /kh 登录")
 
         await self._mark_refresh(context, "attempt")
         try:
@@ -167,6 +172,10 @@ class PlayerDataService:
                         "region": region_id,
                     },
                 )
+        except _PlayerAuthenticationError:
+            await self._mark_refresh(context, "failure")
+            await self._mark_game_auth_invalid(context)
+            raise
         except Exception:
             await self._mark_refresh(context, "failure")
             raise
@@ -281,6 +290,8 @@ class PlayerDataService:
                     allowed_hosts=_ALLOWED_HOSTS,
                     max_bytes=_MAX_RESPONSE_BYTES,
                 )
+            except _PlayerAuthenticationError:
+                raise
             except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError, ValueError):
                 if attempt + 1 >= attempts:
                     raise
@@ -310,6 +321,12 @@ class PlayerDataService:
                     "WHERE refresh_kind = 'player' AND region_id = ? AND uid = ?",
                     (now, now, context.region_id, context.uid),
                 )
+                db.execute(
+                    "UPDATE credentials SET game_token_status = 'valid', updated_at = ? "
+                    "WHERE credential_id = (SELECT credential_id FROM game_accounts "
+                    "WHERE region_id = ? AND uid = ?)",
+                    (now, context.region_id, context.uid),
+                )
             else:
                 db.execute(
                     "UPDATE refresh_states SET failure_count = failure_count + 1, "
@@ -319,6 +336,17 @@ class PlayerDataService:
                 )
 
         await self.database.write(operation)
+
+    async def _mark_game_auth_invalid(self, context: _Context) -> None:
+        now = datetime.now(UTC).isoformat()
+        await self.database.write(
+            lambda db: db.execute(
+                "UPDATE credentials SET game_token_status = 'needs_login', updated_at = ? "
+                "WHERE credential_id = (SELECT credential_id FROM game_accounts "
+                "WHERE region_id = ? AND uid = ? AND qq_id = ?)",
+                (now, context.region_id, context.uid, context.qq_id),
+            )
+        )
 
     def _inside_cooldown(self, refreshed_at: str) -> bool:
         try:
@@ -460,8 +488,10 @@ class PlayerDataService:
 
     @staticmethod
     def _response_data(payload: object) -> dict[str, object]:
-        if not isinstance(payload, dict) or PlayerDataService._integer(payload.get("code")) != 0:
-            raise ValueError("国际服玩家接口拒绝请求")
+        if not isinstance(payload, dict):
+            raise ValueError("国际服玩家接口响应格式无效")
+        if PlayerDataService._integer(payload.get("code")) != 0:
+            raise _PlayerAuthenticationError("国际服游戏授权已失效，请重新执行 /kh 登录")
         data = payload.get("data")
         if not isinstance(data, dict) or not data:
             raise ValueError("国际服玩家接口响应格式无效")

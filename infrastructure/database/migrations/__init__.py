@@ -10,6 +10,7 @@ from .v005_region_uid_redesign import migrate as migrate_v5
 from .v006_login_completion import migrate as migrate_v6
 from .v007_refresh_and_actions import migrate as migrate_v7
 from .v008_resources_and_fonts import migrate as migrate_v8
+from .v009_credential_scopes import migrate as migrate_v9
 
 _MIGRATIONS = {
     1: migrate_v1,
@@ -20,6 +21,7 @@ _MIGRATIONS = {
     6: migrate_v6,
     7: migrate_v7,
     8: migrate_v8,
+    9: migrate_v9,
 }
 
 

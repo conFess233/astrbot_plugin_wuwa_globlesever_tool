@@ -161,6 +161,8 @@ class BackupService:
                     destination.execute(
                         "UPDATE credentials SET encrypted_tokens = '', "
                         "encrypted_device_id = '', token_status = 'needs_login', "
+                        "game_token_status = 'needs_login', "
+                        "guide_token_status = 'needs_login', "
                         "expires_at = NULL, revoked_at = NULL, "
                         "notification_suppressed_until = NULL"
                     )
@@ -362,6 +364,17 @@ class BackupService:
                     str(row["encrypted_device_id"] or "") if restore_credentials else ""
                 )
                 token_status = row["token_status"] if restore_credentials else "needs_login"
+                row_keys = set(row.keys())
+                game_token_status = (
+                    row["game_token_status"]
+                    if restore_credentials and "game_token_status" in row_keys
+                    else ("unknown" if restore_credentials else "needs_login")
+                )
+                guide_token_status = (
+                    row["guide_token_status"]
+                    if restore_credentials and "guide_token_status" in row_keys
+                    else ("unknown" if restore_credentials else "needs_login")
+                )
                 expires_at = row["expires_at"] if restore_credentials else None
                 revoked_at = row["revoked_at"] if restore_credentials else None
                 suppressed_until = (
@@ -370,9 +383,10 @@ class BackupService:
                 if existing is None:
                     cursor = target.execute(
                         "INSERT INTO credentials (qq_id, account_identity_hmac, email_masked, "
-                        "encrypted_tokens, encrypted_device_id, token_status, last_success_at, "
-                        "expires_at, revoked_at, notification_suppressed_until, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "encrypted_tokens, encrypted_device_id, token_status, game_token_status, "
+                        "guide_token_status, last_success_at, expires_at, revoked_at, "
+                        "notification_suppressed_until, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             row["qq_id"],
                             row["account_identity_hmac"],
@@ -380,6 +394,8 @@ class BackupService:
                             encrypted_tokens,
                             encrypted_device,
                             token_status,
+                            game_token_status,
+                            guide_token_status,
                             row["last_success_at"] if restore_credentials else None,
                             expires_at,
                             revoked_at,
@@ -394,14 +410,17 @@ class BackupService:
                     if mode == "overwrite" and restore_credentials:
                         target.execute(
                             "UPDATE credentials SET email_masked = ?, encrypted_tokens = ?, "
-                            "encrypted_device_id = ?, token_status = ?, last_success_at = ?, "
-                            "expires_at = ?, revoked_at = ?, notification_suppressed_until = ?, "
-                            "updated_at = ? WHERE credential_id = ?",
+                            "encrypted_device_id = ?, token_status = ?, game_token_status = ?, "
+                            "guide_token_status = ?, last_success_at = ?, expires_at = ?, "
+                            "revoked_at = ?, notification_suppressed_until = ?, updated_at = ? "
+                            "WHERE credential_id = ?",
                             (
                                 row["email_masked"],
                                 encrypted_tokens,
                                 encrypted_device,
                                 token_status,
+                                game_token_status,
+                                guide_token_status,
                                 row["last_success_at"],
                                 expires_at,
                                 revoked_at,

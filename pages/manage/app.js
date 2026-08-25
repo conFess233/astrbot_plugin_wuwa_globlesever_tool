@@ -131,12 +131,13 @@ function formatTime(value) {
 }
 
 function statusName(value) {
-  return ({ valid: "有效", success: "成功", needs_login: "需登录", invalid: "失效", failed: "失败", unknown: "未知" })[value] || value || "—";
+  return ({ valid: "有效", success: "成功", needs_login: "需登录", invalid: "失效", failed: "失败", unknown: "待验证" })[value] || value || "—";
 }
 
 function statusClass(value) {
   if (["valid", "success"].includes(value)) return "status success";
   if (value === "needs_login") return "status warning";
+  if (value === "unknown") return "status";
   return "status danger";
 }
 
@@ -204,11 +205,13 @@ async function loadOverview() {
     ["QQ 用户", data.users, "groups"],
     ["国际服 UID", data.accounts, "database"],
     ["本地角色记录", data.characters, "archive"],
-    ["有效凭据", data.token_valid, "settings"],
+    ["游戏凭据有效", data.game_token_valid, "settings"],
   ];
   $("#metrics").replaceChildren(...metrics.map((item) => renderMetric(...item)));
   definitionList($("#sync-health"), [
-    ["需重新登录", data.needs_login],
+    ["游戏接口需登录", data.game_needs_login],
+    ["攻略站需登录", data.guide_needs_login],
+    ["攻略站凭据有效", data.guide_token_valid],
     ["同步失败", data.sync_failed],
     ["上次全局成功同步", formatTime(data.last_global_sync)],
     ["自动同步", data.auto_sync?.enabled ? `${data.auto_sync.running ? "运行中" : "已启用"} · ${data.auto_sync.interval_hours} 小时` : "未启用"],
@@ -279,7 +282,13 @@ async function loadAccounts() {
     const account = element("td");
     account.append(element("strong", "", `${item.uid}${item.is_default ? " · 默认" : ""}`), element("div", "muted", item.region_name || item.region_id));
     const statuses = element("td");
-    statuses.append(element("span", statusClass(item.token_status), statusName(item.token_status)), " ", element("span", statusClass(item.sync_status), statusName(item.sync_status)));
+    statuses.append(
+      element("span", statusClass(item.game_token_status), `游戏 ${statusName(item.game_token_status)}`),
+      " ",
+      element("span", statusClass(item.guide_token_status), `攻略 ${statusName(item.guide_token_status)}`),
+      " ",
+      element("span", statusClass(item.sync_status), statusName(item.sync_status)),
+    );
     const actions = element("td");
     actions.append(accountActions(item));
     tr.append(identity, account, element("td", "", item.player_name || "—"), statuses, element("td", "", formatTime(item.last_sync_success_at)), actions);

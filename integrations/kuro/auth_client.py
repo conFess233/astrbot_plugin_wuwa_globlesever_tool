@@ -26,6 +26,8 @@ _GUIDE_BASES = (
 _EMAIL_LOGIN_PATH = "/sdkcom/v2/login/emailPwd.lg"
 _GET_TOKEN_PATH = "/sdkcom/v2/auth/getToken.lg"
 _GENERATE_PATH = "/sdkcom/v2/user/oauth/code/generate.lg"
+_PLAYER_INFO_URL = "https://pc-launcher-sdk-api.kurogame.net/game/queryPlayerInfo"
+_PLAYER_INFO_HOSTS = {"pc-launcher-sdk-api.kurogame.net"}
 _CLIENT_ID = "7rxmydkibzzsf12om5asjnoo"
 _CLIENT_SECRET = "32gh5r0p35ullmxrzzwk40ly"
 _PRODUCT_KEY = "5c063821193f41e09f1c4fdd7567dda3"
@@ -103,15 +105,26 @@ class GlobalAuthClient:
             raise AuthenticationError("登录上下文不完整")
         access_token = await self._get_access_token(result.code, device_id)
         oauth_code = await self._generate_oauth(access_token, device_id)
-        guide_token = await self._guide_login(
-            result.c_uid,
-            result.c_name,
-            access_token,
-            language,
-        )
-        players = await self._guide_players(guide_token, language)
+        players = await self._game_players(oauth_code)
         if not players:
             raise AuthenticationError("该账号没有可绑定的国际服 UID")
+        guide_token: str | None = None
+        guide_status = "unknown"
+        guide_players: tuple[GuidePlayer, ...] = ()
+        try:
+            guide_token = await self._guide_login(
+                result.c_uid,
+                result.c_name,
+                access_token,
+                language,
+            )
+            guide_players = await self._guide_players(guide_token, language)
+            guide_status = "valid"
+        except AuthenticationUnavailableError:
+            guide_status = "unknown"
+        except AuthenticationError:
+            guide_status = "needs_login"
+        players = self._merge_guide_players(players, guide_players)
         return AuthenticatedAccount(
             c_uid=result.c_uid,
             c_name=result.c_name,
@@ -121,6 +134,72 @@ class GlobalAuthClient:
             guide_token=guide_token,
             device_id=device_id,
             players=players,
+            guide_status=guide_status,
+        )
+
+    async def _game_players(self, oauth_code: str) -> tuple[GuidePlayer, ...]:
+        try:
+            payload = await self.http.post_json(
+                _PLAYER_INFO_URL,
+                {"oauthCode": oauth_code},
+                allowed_hosts=_PLAYER_INFO_HOSTS,
+                max_bytes=_MAX_RESPONSE_BYTES,
+            )
+        except (
+            aiohttp.ClientError,
+            TimeoutError,
+            asyncio.TimeoutError,
+            OSError,
+            RuntimeError,
+        ) as exc:
+            raise AuthenticationUnavailableError("无法获取国际服游戏账号列表") from exc
+        if not isinstance(payload, dict) or self._integer(payload.get("code"), default=-1) != 0:
+            raise AuthenticationError("国际服游戏账号列表请求被拒绝")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise AuthenticationError("国际服游戏账号列表响应不完整")
+        result: list[GuidePlayer] = []
+        for region_id, raw in data.items():
+            if isinstance(raw, str):
+                try:
+                    raw = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+            if not isinstance(raw, dict):
+                continue
+            uid = str(raw.get("roleId") or "").strip()
+            region = str(region_id or "").strip()
+            if not uid.isdigit() or not region:
+                continue
+            result.append(
+                GuidePlayer(
+                    uid=uid,
+                    player_name=self._optional_text(raw.get("roleName")),
+                    region_id=region,
+                    region_name=region,
+                    level=self._integer(raw.get("level"), default=None),
+                )
+            )
+        return tuple(result)
+
+    @staticmethod
+    def _merge_guide_players(
+        game_players: tuple[GuidePlayer, ...],
+        guide_players: tuple[GuidePlayer, ...],
+    ) -> tuple[GuidePlayer, ...]:
+        guide_map = {(player.region_id, player.uid): player for player in guide_players}
+        return tuple(
+            GuidePlayer(
+                uid=player.uid,
+                player_name=(
+                    guide.player_name if guide and guide.player_name else player.player_name
+                ),
+                region_id=player.region_id,
+                region_name=(guide.region_name if guide else player.region_name),
+                level=(guide.level if guide and guide.level is not None else player.level),
+            )
+            for player in game_players
+            for guide in (guide_map.get((player.region_id, player.uid)),)
         )
 
     async def _get_access_token(self, code: str, device_id: str) -> str:
