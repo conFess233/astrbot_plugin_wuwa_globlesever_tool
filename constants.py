@@ -1,4 +1,4 @@
-"""插件级稳定常量。"""
+"""常量"""
 
 PLUGIN_NAME = "astrbot_plugin_wuwa_globlesever_tool"
 PLUGIN_DISPLAY_NAME = "鸣潮国际服数据工具"

@@ -9,7 +9,7 @@
 [![Platform](https://img.shields.io/badge/OneBot_11-QQ-12b7f5)](https://github.com/botuniverse/onebot-11)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green)](LICENSE)
 
-[功能](#功能概览) · [安装](#安装与部署) · [命令](#命令全集) · [管理](#dashboard-管理) · [数据](#本地数据与隐私) · [更新日志](CHANGELOG.md)
+[功能](#功能概览) · [安装](#安装与部署) · [命令](#命令) · [管理](#webui) · [数据](#本地数据与隐私) · [更新日志](CHANGELOG.md)
 
 </div>
 
@@ -27,7 +27,7 @@
 | 本地档案       | 未登录、未拥有角色时也可创建本地记录；接口以后返回该角色时会按稳定角色 ID 合并                |
 | 统一卡片       | 角色总览、角色详情、账号信息、日常、探索和帮助均返回统一风格图片；角色总览为单张五列长图      |
 | 资源与字体     | 武器和属性使用图片/图标，不再暴露内部 ID；支持受限资源缓存、字体 URL/ZIP 下载、默认字体切换   |
-| Dashboard      | 管理配置、账号、字体、资源、卡片预览、缓存、审计和脱敏导出；沿用 AstrBot Dashboard 登录态     |
+| WebUI          | 管理配置、账号、字体、资源、卡片预览、缓存、审计和脱敏导出；沿用 AstrBot Dashboard 登录态     |
 
 声骸评分暂未启用。数据模型保留评分字段，当前展示值为 `---`，便于后续扩展。
 
@@ -82,7 +82,7 @@ curl.exe -i "https://你的登录域名/health"
 
 如果代理和 AstrBot 不在同一主机，应将 `login_server_host`、防火墙与 `login_trusted_proxy_cidrs` 配成仅允许代理主机访问；不建议直接向公网开放登录端口。
 
-## 用户流程
+## 登录流程
 
 1. 在群内发送 `/kh 登录`。
 2. 打开 Bot 返回的临时 HTTPS 链接，输入国际服邮箱和密码。
@@ -100,7 +100,7 @@ curl.exe -i "https://你的登录域名/health"
 /kh 角色 今汐
 ```
 
-## 命令全集
+## 命令
 
 `/kh` 是永久兼容入口，不能关闭。管理员可通过 `extra_command_roots` 增加 `/ww` 等入口。正式命令和关键词均兼容消息中的 `@Bot`。
 
@@ -164,7 +164,7 @@ curl.exe -i "https://你的登录域名/health"
 
 所有关键词列表都可在插件设置中修改。解析采用完整短语和最长匹配；配置中存在关键词冲突时会拒绝整次保存。
 
-## Dashboard 管理
+## WebUI
 
 插件页面复用 AstrBot Dashboard 登录态，不设置插件 API Key。当前页面提供：
 
@@ -177,7 +177,7 @@ curl.exe -i "https://你的登录域名/health"
 
 字体下载会阻止 loopback、私网、链路本地和云元数据地址，并限制重定向、文件大小、ZIP 路径、文件数和解压体积。插件预设 HarmonyOS Sans 的 ZIP 镜像，也允许管理员添加自定义 URL；字体许可和官方资源说明请查看 [Huawei Design Resources](https://developer.huawei.com/consumer/en/design/resource/)。
 
-## 关键配置
+## 配置
 
 完整字段、默认值和提示以 [\_conf_schema.json](_conf_schema.json) 及 Dashboard 表单为准。
 
@@ -251,8 +251,6 @@ test/              仅本地测试，已忽略且不会发布
 
 - 当前仅适配 QQ OneBot 11 / `aiocqhttp`。
 - 声骸评分尚未实现，评分占位为 `---`。
-- 国际服与攻略站接口不是本插件控制的稳定契约，上游协议变化可能导致登录或刷新暂时失效。
-- 尚未使用维护者的真实国际服账号完成本次 `0.6.0` 全链路登录与数据刷新验收；本地迁移、命令、Web 安全、资源、字体与卡片管线测试已覆盖。
 
 ## 鸣谢
 
