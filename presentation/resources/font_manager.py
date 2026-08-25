@@ -87,6 +87,8 @@ class FontManager:
             raise FontPackageError("仅支持直接 TTF/OTF 文件或 ZIP 压缩包")
         else:
             files = ((name or "font", downloaded.data),)
+        if make_default and len(files) > 1:
+            files = tuple(sorted(files, key=_default_font_candidate_priority))
         entries: list[FontEntry] = []
         for index, (file_name, data) in enumerate(files):
             custom_name = display_name if len(files) == 1 else None
@@ -278,6 +280,12 @@ def _read_safe_zip_fonts(data: bytes) -> tuple[tuple[str, bytes], ...]:
             _inspect_sfnt(content)
             files.append((member.filename, content))
         return tuple(files)
+
+
+def _default_font_candidate_priority(item: tuple[str, bytes]) -> tuple[bool, bool, str]:
+    normalized = item[0].casefold().replace("\\", "/")
+    tokens = normalized.replace("/", "_").replace("-", "_").replace(" ", "_").split("_")
+    return ("sc" not in tokens, "regular" not in tokens, normalized)
 
 
 def _inspect_sfnt(data: bytes) -> _FontMetadata:
