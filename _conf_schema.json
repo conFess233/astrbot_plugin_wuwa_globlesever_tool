@@ -208,6 +208,18 @@
     "default": 30,
     "hint": "范围 5 到 120；超时后自动降级为文本。"
   },
+  "resource_cache_max_mb": {
+    "description": "图片资源缓存上限（MiB）",
+    "type": "int",
+    "default": 512,
+    "hint": "范围 64 到 4096；只按最近使用时间回收未被当前数据引用的资源。"
+  },
+  "resource_download_timeout_seconds": {
+    "description": "资源与字体下载超时秒数",
+    "type": "int",
+    "default": 60,
+    "hint": "范围 10 到 300；每次下载还会独立执行公网地址、大小与文件格式校验。"
+  },
   "admin_audit_retention_days": {
     "description": "管理审计保留天数",
     "type": "int",

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "character": {
+    "level": {"minimum": 1, "maximum": 90},
+    "chain": {"minimum": 0, "maximum": 6},
+    "stars": [4, 5]
+  },
+  "weapon": {
+    "level": {"minimum": 1, "maximum": 90},
+    "refinement": {"minimum": 1, "maximum": 5},
+    "stars": [1, 2, 3, 4, 5]
+  },
+  "visual_tokens": {
+    "rarity_5": ["#7a5831", "#d4aa62", "#fff1c4"],
+    "rarity_4": ["#4b3b67", "#8b70b6", "#eadcff"],
+    "chain_1": "#8aa1ad",
+    "chain_2": "#6ba891",
+    "chain_3": "#5d9ec0",
+    "chain_4": "#8a78bd",
+    "chain_5": "#c18a43",
+    "chain_6": "#c65347"
+  },
+  "score": {
+    "enabled": false,
+    "placeholder": "---"
+  }
+}

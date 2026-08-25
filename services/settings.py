@@ -53,6 +53,8 @@ class PluginSettings:
     player_refresh_timeout_seconds: int
     role_refresh_timeout_seconds: int
     render_timeout_seconds: int
+    resource_cache_max_mb: int
+    resource_download_timeout_seconds: int
     admin_audit_retention_days: int
 
     @classmethod
@@ -154,6 +156,10 @@ class PluginSettings:
                 values, "role_refresh_timeout_seconds", 180, 30, 600
             ),
             render_timeout_seconds=cls._bounded_int(values, "render_timeout_seconds", 30, 5, 120),
+            resource_cache_max_mb=cls._bounded_int(values, "resource_cache_max_mb", 512, 64, 4096),
+            resource_download_timeout_seconds=cls._bounded_int(
+                values, "resource_download_timeout_seconds", 60, 10, 300
+            ),
             admin_audit_retention_days=cls._bounded_int(
                 values, "admin_audit_retention_days", 30, 0, 365
             ),

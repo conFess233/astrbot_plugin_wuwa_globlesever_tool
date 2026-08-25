@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "presets": [
+    {
+      "id": "harmonyos-sans",
+      "display_name": "HarmonyOS Sans",
+      "official_page_url": "https://developer.huawei.com/consumer/en/design/resource/",
+      "download_url": "https://raw.githubusercontent.com/huawei-fonts/HarmonyOS-Sans/main/HarmonyOS%20Sans.zip",
+      "archive_format": "zip",
+      "source_kind": "community-github-mirror",
+      "note": "官方页面当前提供 RAR 包；插件按安全策略预设 ZIP 镜像，下载前仍执行公网地址、大小、路径与字体格式校验。"
+    }
+  ]
+}

@@ -21,7 +21,9 @@ from .infrastructure.card_cache import remove_all_cards
 from .infrastructure.crypto import MasterKeyProvider, TokenCipher
 from .infrastructure.database import Database
 from .infrastructure.http import HttpClient
+from .infrastructure.network import SafeHttpDownloader
 from .infrastructure.storage import RuntimePaths
+from .presentation.resources import FontManager, ResourceManager, UiAssetManifest
 from .repositories.accounts import AccountError, AccountRepository
 from .repositories.local_data import LocalDataError, LocalDataRepository
 from .services.backups import BackupService
@@ -51,6 +53,10 @@ class WuWaGlobalServerPlugin(Star):
         self.paths = RuntimePaths.from_astrbot()
         self.database = Database(self.paths.database)
         self.http = HttpClient(self.settings.request_timeout_seconds)
+        self.safe_downloader = SafeHttpDownloader()
+        self.ui_assets = UiAssetManifest.load(
+            self.plugin_root / "static" / "data" / "ui_assets.json"
+        )
         self.cipher: TokenCipher | None = None
         self.catalog = CharacterCatalog.load_bundled(
             self.paths.cache_static_data / "characters.json"
@@ -65,6 +71,8 @@ class WuWaGlobalServerPlugin(Star):
         self.commands: CommandService | None = None
         self.dashboard_service: DashboardService | None = None
         self.backup_service: BackupService | None = None
+        self.resource_manager: ResourceManager | None = None
+        self.font_manager: FontManager | None = None
         self._initialized = False
         self.web = WebManager(
             self.paths,
@@ -157,6 +165,20 @@ class WuWaGlobalServerPlugin(Star):
                 "%s：复合账号迁移完成，已清理 %s 张旧卡片缓存", PLUGIN_DISPLAY_NAME, removed
             )
         await self.http.initialize()
+        await self.safe_downloader.initialize()
+        self.resource_manager = ResourceManager(
+            self.database,
+            self.paths.cache_resources,
+            self.safe_downloader,
+            cache_limit_mb=self.settings.resource_cache_max_mb,
+            timeout_seconds=self.settings.resource_download_timeout_seconds,
+        )
+        self.font_manager = FontManager(
+            self.database,
+            self.paths.fonts,
+            self.safe_downloader,
+            timeout_seconds=self.settings.resource_download_timeout_seconds,
+        )
         self.repository = LocalDataRepository(
             self.database,
             self.paths.media_cards,
@@ -360,6 +382,13 @@ class WuWaGlobalServerPlugin(Star):
             self.player_data.settings = settings
         if self.card_renderer is not None:
             self.card_renderer.timeout_seconds = settings.render_timeout_seconds
+        if self.resource_manager is not None:
+            self.resource_manager.update_limits(
+                cache_limit_mb=settings.resource_cache_max_mb,
+                timeout_seconds=settings.resource_download_timeout_seconds,
+            )
+        if self.font_manager is not None:
+            self.font_manager.timeout_seconds = settings.resource_download_timeout_seconds
         if self.commands is not None:
             self.commands.settings = settings
 
@@ -512,6 +541,7 @@ class WuWaGlobalServerPlugin(Star):
         await self.dashboard_web.close()
         if self.sync_service is not None:
             await self.sync_service.close()
+        await self.safe_downloader.close()
         await self.http.close()
         await self.database.close()
         self.cipher = None
@@ -524,6 +554,8 @@ class WuWaGlobalServerPlugin(Star):
         self.commands = None
         self.dashboard_service = None
         self.backup_service = None
+        self.resource_manager = None
+        self.font_manager = None
         logger.info("%s：已停止", PLUGIN_DISPLAY_NAME)
 
 
