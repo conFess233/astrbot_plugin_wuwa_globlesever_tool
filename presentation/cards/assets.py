@@ -49,13 +49,14 @@ class CardAssetPreparer:
 
     async def _prepare_player(self, player: dict[str, Any]) -> None:
         avatar_id = str(player.get("avatar_id") or "")
-        fallback = self.manifest.character(avatar_id) if avatar_id else None
+        game_avatar_url = self.manifest.account_avatar_url(avatar_id) if avatar_id else None
+        resource_id = f"{player.get('uid') or 'unknown'}-{avatar_id or 'default'}"
         await self._image(
             player,
             "image_url",
             "avatar",
-            avatar_id or str(player.get("uid") or "unknown"),
-            (player.get("image_url"), fallback.get("card_picture_url") if fallback else None),
+            resource_id,
+            (player.get("image_url"), game_avatar_url, player.get("qq_avatar_url")),
             "avatar",
         )
 

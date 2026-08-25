@@ -111,7 +111,7 @@ body {
 .metric-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 11px; }
 .metric-card strong { display: inline-block; margin-top: 9px; font-size: 31px; }.metric-card small { margin-left: 4px; color: var(--muted); }
 .metric-card .date-value { font-size: 22px; }.account-summary { grid-column: 1 / -1; padding: 18px; border-radius: 15px; background: #252b30; }
-.account-summary > span { color: var(--muted); font-size: 12px; }.account-summary strong { display: block; margin-top: 5px; font-size: 22px; }.account-summary p { margin: 4px 0 0; color: #b4bdc1; }
+.account-summary > span { color: var(--muted); font-size: 12px; }.account-summary strong { display: block; margin-top: 5px; font-size: 22px; }.account-summary p { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 4px 0 0; color: #b4bdc1; }
 .daily-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
 .energy-card, .reserve-card, .battle-pass { grid-column: 1 / -1; }.status-top, .battle-pass-head { display: flex; align-items: start; justify-content: space-between; }
 .status-top span, .battle-pass-head span { display: block; color: var(--muted); font-size: 12px; }.status-top strong, .battle-pass-head strong { display: block; margin-top: 4px; font-size: 28px; }

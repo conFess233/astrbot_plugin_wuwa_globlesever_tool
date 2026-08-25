@@ -197,6 +197,7 @@ class CommandService:
             len(records),
             records,
             player,
+            qq_id,
         )
 
     async def _character_detail(self, qq_id: str, command: ParsedCommand) -> str | CardMessage:
@@ -226,11 +227,11 @@ class CommandService:
             raise CommandServiceError("玩家详情服务尚未初始化")
         snapshot = await self.player_data.query(qq_id, external_query=command.target_qq is not None)
         if kind == "account_info":
-            result = await self.cards.account_info(snapshot)
+            result = await self.cards.account_info(snapshot, qq_id)
         elif kind == "daily":
-            result = await self.cards.daily(snapshot)
+            result = await self.cards.daily(snapshot, qq_id)
         else:
-            result = await self.cards.exploration(snapshot)
+            result = await self.cards.exploration(snapshot, qq_id)
         if snapshot.is_cached_fallback:
             if isinstance(result, CardMessage):
                 return replace(result, notice="刷新失败，已展示缓存")

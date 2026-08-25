@@ -59,13 +59,14 @@ class CardService:
         total_characters: int,
         records: list[CharacterRecord],
         player: PlayerSnapshot | None = None,
+        qq_id: str | None = None,
     ) -> str | CardMessage:
         model = CharacterListCard(
             kind="character_list",
             scope=f"profile-{profile.profile_id}-characters",
             heading=heading,
             profile_note=_profile_note(profile),
-            player=self._player_header(player) if player is not None else None,
+            player=self._player_header(player, qq_id) if player is not None else None,
             total_characters=total_characters,
             characters=tuple(self._character(record) for record in records),
             updated_at=_latest_update(records),
@@ -140,26 +141,28 @@ class CardService:
         )
         return await self._response(model, _detail_text(model))
 
-    async def account_info(self, snapshot: PlayerSnapshot) -> str | CardMessage:
+    async def account_info(
+        self, snapshot: PlayerSnapshot, qq_id: str | None = None
+    ) -> str | CardMessage:
         model = AccountInfoCard(
             kind="account_info",
             scope=f"uid-{snapshot.uid}-account-info",
             heading="账号信息",
             profile_note=None,
-            player=self._player_header(snapshot),
+            player=self._player_header(snapshot, qq_id),
             active_days=snapshot.active_days,
             created_at=_timestamp(snapshot.created_at_ms),
             refreshed_at=_display_time(snapshot.refreshed_at),
         )
         return await self._response(model, _account_text(model))
 
-    async def daily(self, snapshot: PlayerSnapshot) -> str | CardMessage:
+    async def daily(self, snapshot: PlayerSnapshot, qq_id: str | None = None) -> str | CardMessage:
         model = DailyCard(
             kind="daily",
             scope=f"uid-{snapshot.uid}-daily",
             heading="日常状态",
             profile_note=None,
-            player=self._player_header(snapshot),
+            player=self._player_header(snapshot, qq_id),
             energy=snapshot.energy,
             max_energy=snapshot.max_energy,
             energy_recover_at=_recovery_time(snapshot.energy_recover_time_ms),
@@ -182,13 +185,15 @@ class CardService:
         )
         return await self._response(model, _daily_text(model))
 
-    async def exploration(self, snapshot: PlayerSnapshot) -> str | CardMessage:
+    async def exploration(
+        self, snapshot: PlayerSnapshot, qq_id: str | None = None
+    ) -> str | CardMessage:
         model = ExplorationCard(
             kind="exploration",
             scope=f"uid-{snapshot.uid}-exploration",
             heading="探索收集",
             profile_note=None,
-            player=self._player_header(snapshot),
+            player=self._player_header(snapshot, qq_id),
             sound_box=snapshot.sound_box,
             boxes=_collection_rows(snapshot.boxes, _BOX_NAMES),
             basic_boxes=_collection_rows(snapshot.basic_boxes, _BOX_NAMES),
@@ -197,17 +202,17 @@ class CardService:
         )
         return await self._response(model, _exploration_text(model))
 
-    def _player_header(self, snapshot: PlayerSnapshot) -> PlayerHeader:
-        avatar = self.catalog.get(snapshot.head_photo)
+    def _player_header(self, snapshot: PlayerSnapshot, qq_id: str | None = None) -> PlayerHeader:
         return PlayerHeader(
             avatar_id=str(snapshot.head_photo) if snapshot.head_photo is not None else None,
-            image_url=avatar.card_picture_url if avatar is not None else None,
+            image_url=None,
             name=snapshot.player_name or "漂泊者",
             uid=snapshot.uid,
             region_name=snapshot.region_name,
             level=snapshot.level,
             world_level=snapshot.world_level,
             role_count=snapshot.role_num,
+            qq_avatar_url=_qq_avatar_url(qq_id),
         )
 
     def _character(self, record: CharacterRecord) -> CardCharacter:
@@ -288,7 +293,7 @@ def _account_text(model: AccountInfoCard) -> str:
     player = model.player
     lines = [
         model.heading,
-        f"{player.name} · UID {player.uid} · {player.region_name}",
+        f"{player.name} · UID {player.uid}",
         f"账号等级：{_value(player.level)} · 索拉等级：{_value(player.world_level)}",
         f"已拥有角色：{_value(player.role_count)}",
         f"活跃天数：{_value(model.active_days)}",
@@ -412,6 +417,13 @@ def _ratio(value: int | None, maximum: int | None) -> str:
 
 def _value(value: object | None) -> str:
     return "---" if value is None else str(value)
+
+
+def _qq_avatar_url(qq_id: str | None) -> str | None:
+    value = str(qq_id or "").strip()
+    if not value.isdigit() or len(value) > 20:
+        return None
+    return f"https://q1.qlogo.cn/g?b=qq&nk={int(value)}&s=160"
 
 
 def _source(value: str | None) -> str:

@@ -10,11 +10,18 @@
   ],
   "resolution_order": [
     "current_api_url",
+    "game_head_photo",
     "guide_public_metadata",
     "bundled_manifest",
     "valid_local_cache",
+    "qq_avatar",
     "local_placeholder"
   ],
+  "account_avatars": {
+    "source": "WwTool bundled game icons",
+    "source_url": "https://github.com/conFess233/WwTool/tree/master/WwTool/Local/Icons",
+    "url_template": "https://raw.githubusercontent.com/conFess233/WwTool/master/WwTool/Local/Icons/{id}.png"
+  },
   "placeholders": {
     "avatar": "../ui/placeholders/avatar.svg",
     "character": "../ui/placeholders/character.svg",

@@ -40,3 +40,15 @@ class UiAssetManifest:
             (item for item in self.characters if str(item.get("id")) == str(character_id)),
             None,
         )
+
+    def account_avatar_url(self, avatar_id: str) -> str | None:
+        normalized = str(avatar_id or "").strip()
+        if not normalized.isdigit():
+            return None
+        payload = self.payload.get("account_avatars")
+        if not isinstance(payload, dict):
+            return None
+        template = str(payload.get("url_template") or "")
+        if "{id}" not in template:
+            return None
+        return template.replace("{id}", str(int(normalized)))

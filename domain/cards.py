@@ -14,6 +14,7 @@ class PlayerHeader:
     level: int | None
     world_level: int | None
     role_count: int | None
+    qq_avatar_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
