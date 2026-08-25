@@ -1,4 +1,4 @@
-"""短期网页登录会话、限流和 QQ 二次确认。"""
+"""短期网页登录会话、复合账号绑定与登录限流。"""
 
 import hmac
 import json
@@ -14,19 +14,23 @@ from ..domain.login import (
     AuthClient,
     AuthenticationError,
     AuthenticationUnavailableError,
+    BrowserLoginState,
     BrowserSession,
     GuidePlayer,
-    LoginConfirmationResult,
+    LoginCompletionResult,
     LoginLinkMessage,
-    LoginSelectionResult,
     LoginSubmitResult,
 )
+from ..domain.models import RegionUid
 from ..infrastructure.crypto import CryptoError, TokenCipher
 from ..infrastructure.database import Database
 from .settings import PluginSettings
 
 _EMAIL = re.compile(r"^[^\s@]{1,128}@[^\s@]{1,190}$")
 _GEETEST_KEYS = {"captcha_output", "gen_time", "lot_number", "pass_token"}
+_ACTIVE_STATUSES = ("active", "risk", "selecting")
+_MAX_RATE_IDENTITIES = 10_000
+_RateIdentity = tuple[str, str, int]
 
 
 class LoginSessionError(ValueError):
@@ -70,6 +74,7 @@ class LoginSessionService:
         now = _iso()
 
         def operation(db: sqlite3.Connection) -> None:
+            db.execute("DELETE FROM pending_logins WHERE expires_at <= ?", (now,))
             db.execute("DELETE FROM pending_logins WHERE requesting_qq_id = ?", (qq_id,))
             db.execute(
                 "INSERT INTO pending_logins (session_id, requesting_qq_id, origin_context, "
@@ -79,27 +84,56 @@ class LoginSessionService:
             )
 
         await self.database.write(operation)
-        base = self.settings.public_https_base_url
         path = f"{PUBLIC_LOGIN_PREFIX}/login/{quote(link_token)}"
-        return LoginLinkMessage(f"{base}{path}", self.settings.login_link_ttl_minutes)
+        return LoginLinkMessage(
+            f"{self.settings.public_https_base_url}{path}",
+            self.settings.login_link_ttl_minutes,
+        )
+
+    async def cancel(self, qq_id: str) -> bool:
+        now = _iso()
+        changed = await self.database.write(
+            lambda db: (
+                db.execute(
+                    "UPDATE pending_logins SET status = 'cancelled', link_used_at = ?, "
+                    "session_token_hash = NULL, csrf_token_hash = NULL, "
+                    "encrypted_pending_tokens = NULL, updated_at = ? "
+                    "WHERE requesting_qq_id = ? "
+                    "AND status IN ('created', 'active', 'risk', 'selecting')",
+                    (now, now, qq_id),
+                ).rowcount
+            )
+        )
+        return bool(changed)
 
     async def validate_link(self, link_token: str) -> bool:
-        if not link_token or len(link_token) > 256:
+        if not self._valid_token(link_token):
             return False
         digest = self._digest(f"login-link:{link_token}")
         row = await self.database.read(
             lambda db: db.execute(
                 "SELECT 1 FROM pending_logins WHERE link_token_hash = ? "
-                "AND status = 'created' AND link_used_at IS NULL AND expires_at > ?",
+                "AND status = 'created' AND link_exchanged_at IS NULL "
+                "AND link_used_at IS NULL AND expires_at > ?",
                 (digest, _iso()),
             ).fetchone()
         )
         return row is not None
 
-    async def exchange_link(self, link_token: str) -> BrowserSession:
-        if not link_token or len(link_token) > 256:
+    async def exchange_link(self, link_token: str, client_ip: str) -> BrowserSession:
+        link_digest = self._digest(f"login-link:{link_token or 'invalid'}")
+        ip_digest = self._digest(f"rate-ip:{client_ip or 'unknown'}")
+        endpoint_digest = self._digest(f"rate-endpoint:exchange:{client_ip or 'unknown'}")
+        identities = (
+            ("link", link_digest, self.settings.login_session_max_attempts),
+            ("ip:exchange", ip_digest, self.settings.login_ip_max_attempts),
+            ("endpoint:exchange", endpoint_digest, self.settings.login_ip_max_attempts),
+        )
+        await self._check_rate_limits(None, identities)
+        if not self._valid_token(link_token):
+            await self._record_failure(None, identities)
             raise LoginSessionError("登录链接无效或已过期")
-        link_digest = self._digest(f"login-link:{link_token}")
+
         session_token = secrets.token_urlsafe(32)
         csrf_token = secrets.token_urlsafe(24)
         session_digest = self._digest(f"login-session:{session_token}")
@@ -112,23 +146,64 @@ class LoginSessionService:
         def operation(db: sqlite3.Connection) -> datetime:
             row = db.execute(
                 "SELECT expires_at FROM pending_logins WHERE link_token_hash = ? "
-                "AND status = 'created' AND link_used_at IS NULL AND expires_at > ?",
+                "AND status = 'created' AND link_exchanged_at IS NULL "
+                "AND link_used_at IS NULL AND expires_at > ?",
                 (link_digest, now),
             ).fetchone()
             if row is None:
                 raise LoginSessionError("登录链接无效或已过期")
             updated = db.execute(
                 "UPDATE pending_logins SET status = 'active', session_token_hash = ?, "
-                "csrf_token_hash = ?, link_used_at = ?, encrypted_pending_tokens = ?, "
-                "updated_at = ? WHERE link_token_hash = ? AND link_used_at IS NULL",
-                (session_digest, csrf_digest, now, encrypted, now, link_digest),
+                "csrf_token_hash = ?, link_exchanged_at = ?, encrypted_pending_tokens = ?, "
+                "last_client_ip_hmac = ?, updated_at = ? "
+                "WHERE link_token_hash = ? AND status = 'created' "
+                "AND link_exchanged_at IS NULL AND link_used_at IS NULL",
+                (
+                    session_digest,
+                    csrf_digest,
+                    now,
+                    encrypted,
+                    ip_digest,
+                    now,
+                    link_digest,
+                ),
             ).rowcount
             if updated != 1:
-                raise LoginSessionError("登录链接已被使用")
+                raise LoginSessionError("登录链接无效或已过期")
             return datetime.fromisoformat(str(row["expires_at"]))
 
-        expires_at = await self.database.write(operation)
+        try:
+            expires_at = await self.database.write(operation)
+        except LoginSessionError:
+            await self._record_failure(None, identities)
+            raise
+        await self._clear_rate_limits(identities)
         return BrowserSession(session_token, csrf_token, expires_at)
+
+    async def browser_state(
+        self,
+        session_token: str,
+        csrf_token: str,
+        origin: str,
+    ) -> BrowserLoginState:
+        row = await self._active_session(
+            session_token,
+            csrf_token,
+            origin,
+            statuses=_ACTIVE_STATUSES,
+        )
+        status = str(row["status"])
+        players = ()
+        if status == "selecting":
+            players = self._players_from_json(
+                str(row["available_accounts_json"] or row["available_uids_json"] or "[]")
+            )
+        return BrowserLoginState(
+            status=status,
+            expires_at=datetime.fromisoformat(str(row["expires_at"])),
+            email_masked=str(row["email_masked"]) if row["email_masked"] else None,
+            players=players,
+        )
 
     async def submit_credentials(
         self,
@@ -139,12 +214,10 @@ class LoginSessionService:
         origin: str,
         client_ip: str,
         geetest: dict[str, str] | None = None,
+        *,
+        endpoint: str = "login",
     ) -> LoginSubmitResult:
         normalized_email = email.strip().casefold()
-        if not _EMAIL.fullmatch(normalized_email):
-            raise LoginSessionError("邮箱格式无效")
-        if not password or len(password) > 256:
-            raise LoginSessionError("密码不能为空且不能超过 256 个字符")
         geetest = self._clean_geetest(geetest)
         row = await self._active_session(
             session_token,
@@ -155,7 +228,24 @@ class LoginSessionService:
         session_id = str(row["session_id"])
         email_hmac = self._digest(f"rate-email:{normalized_email}")
         ip_hmac = self._digest(f"rate-ip:{client_ip or 'unknown'}")
-        await self._check_rate_limits(row, email_hmac, ip_hmac)
+        endpoint_hmac = self._digest(f"rate-endpoint:{endpoint}:{client_ip or 'unknown'}")
+        identities = (
+            ("email", email_hmac, self.settings.login_email_max_attempts),
+            ("ip:auth", ip_hmac, self.settings.login_ip_max_attempts),
+            (f"endpoint:{endpoint}", endpoint_hmac, self.settings.login_ip_max_attempts),
+            (
+                "session",
+                str(row["session_token_hash"]),
+                self.settings.login_session_max_attempts,
+            ),
+        )
+        await self._check_rate_limits(row, identities)
+        if not _EMAIL.fullmatch(normalized_email):
+            await self._record_failure(session_id, identities)
+            raise LoginSessionError("邮箱格式无效")
+        if not password or len(password) > 256:
+            await self._record_failure(session_id, identities)
+            raise LoginSessionError("密码不能为空且不能超过 256 个字符")
         try:
             pending = json.loads(self.cipher.decrypt_text(str(row["encrypted_pending_tokens"])))
             device_id = str(pending["device_id"])
@@ -177,29 +267,17 @@ class LoginSessionService:
         except AuthenticationUnavailableError as exc:
             raise LoginSessionError(str(exc)) from exc
         except AuthenticationError as exc:
-            await self._record_failure(session_id, email_hmac, ip_hmac)
+            await self._record_failure(session_id, identities)
             raise LoginSessionError(str(exc)) from exc
 
         players = self._unique_players(account.players)
         if not players:
+            await self._record_failure(session_id, identities)
             raise LoginSessionError("该账号没有可绑定的国际服 UID")
         sensitive = account.sensitive_payload()
         sensitive["device_id"] = account.device_id
         encrypted = self.cipher.encrypt_text(json.dumps(sensitive, separators=(",", ":")))
-        available = json.dumps(
-            [
-                {
-                    "uid": player.uid,
-                    "player_name": player.player_name,
-                    "region_id": player.region_id,
-                    "region_name": player.region_name,
-                    "level": player.level,
-                }
-                for player in players
-            ],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
+        available = self._players_json(players)
         email_masked = self._mask_email(normalized_email)
         identity_hmac = self._digest(f"account-email:{normalized_email}")
         now = _iso()
@@ -208,8 +286,9 @@ class LoginSessionService:
             updated = db.execute(
                 "UPDATE pending_logins SET status = 'selecting', encrypted_pending_tokens = ?, "
                 "available_uids_json = ?, available_accounts_json = ?, "
-                "email_identity_hmac = ?, email_masked = ?, "
-                "updated_at = ? WHERE session_id = ? AND expires_at > ?",
+                "email_identity_hmac = ?, email_masked = ?, failed_attempts = 0, "
+                "locked_until = NULL, updated_at = ? "
+                "WHERE session_id = ? AND status IN ('active', 'risk') AND expires_at > ?",
                 (
                     encrypted,
                     available,
@@ -223,118 +302,54 @@ class LoginSessionService:
             ).rowcount
             if updated != 1:
                 raise LoginSessionError("登录会话已过期")
-            db.execute(
-                "DELETE FROM login_rate_limits WHERE (scope = 'email' AND identity_hmac = ?) "
-                "OR (scope = 'ip' AND identity_hmac = ?)",
-                (email_hmac, ip_hmac),
-            )
 
         await self.database.write(operation)
-        return LoginSubmitResult(False, players=players)
+        await self._clear_rate_limits(identities)
+        return LoginSubmitResult(False, players=players, email_masked=email_masked)
 
-    async def select_uids(
+    async def complete_accounts(
         self,
         session_token: str,
         csrf_token: str,
         origin: str,
-        selected_uids: list[str],
-        default_uid: str,
-    ) -> LoginSelectionResult:
+        selected_accounts: list[dict[str, object]],
+        default_account: dict[str, object],
+    ) -> LoginCompletionResult:
         row = await self._active_session(
             session_token,
             csrf_token,
             origin,
             statuses=("selecting",),
         )
-        available = self._players_from_json(str(row["available_uids_json"] or "[]"))
-        players_by_uid: dict[str, list[GuidePlayer]] = {}
-        for player in available:
-            players_by_uid.setdefault(player.uid, []).append(player)
-        selected = tuple(
-            dict.fromkeys(str(uid).strip() for uid in selected_uids if str(uid).strip())
+        available = self._players_from_json(
+            str(row["available_accounts_json"] or row["available_uids_json"] or "[]")
         )
-        if not selected or any(uid not in players_by_uid for uid in selected):
-            raise LoginSessionError("至少选择一个本次账号返回的 UID")
-        if any(len(players_by_uid[uid]) != 1 for uid in selected):
-            raise LoginSessionError("相同 UID 存在于多个区服，请等待登录页区服选择升级")
-        if default_uid not in selected:
-            raise LoginSessionError("默认 UID 必须位于已选 UID 中")
-        selected_accounts = tuple(
-            {
-                "region_id": players_by_uid[uid][0].region_id,
-                "uid": uid,
-            }
-            for uid in selected
-        )
-        default_region_id = players_by_uid[default_uid][0].region_id
-        code = "".join(secrets.choice("0123456789") for _ in range(6))
-        expires_at = _now() + timedelta(minutes=self.settings.confirm_ttl_minutes)
-        code_hash = self._digest(f"login-confirm:{row['session_id']}:{code}")
+        player_map = {(player.region_id, player.uid): player for player in available}
+        selected = tuple(dict.fromkeys(self._parse_account(item) for item in selected_accounts))
+        default = self._parse_account(default_account)
+        if not selected:
+            raise LoginSessionError("至少选择一个本次账号返回的游戏账号")
+        if default not in selected:
+            raise LoginSessionError("默认账号必须位于已选账号中")
+        if any((account.region_id, account.uid) not in player_map for account in selected):
+            raise LoginSessionError("只能选择本次登录返回的游戏账号")
+        session_hash = self._digest(f"login-session:{session_token}")
+        csrf_hash = self._digest(f"login-csrf:{csrf_token}")
         now = _iso()
 
-        def operation(db: sqlite3.Connection) -> None:
-            updated = db.execute(
-                "UPDATE pending_logins SET status = 'awaiting_confirm', selected_uids_json = ?, "
-                "selected_accounts_json = ?, selected_default_uid = ?, "
-                "selected_default_region_id = ?, confirm_code_hash = ?, failed_attempts = 0, "
-                "expires_at = ?, updated_at = ? WHERE session_id = ? AND status = 'selecting'",
-                (
-                    json.dumps(selected, separators=(",", ":")),
-                    json.dumps(selected_accounts, separators=(",", ":")),
-                    default_uid,
-                    default_region_id,
-                    code_hash,
-                    _iso(expires_at),
-                    now,
-                    row["session_id"],
-                ),
-            ).rowcount
-            if updated != 1:
-                raise LoginSessionError("登录会话状态已变化，请重新发起登录")
-
-        await self.database.write(operation)
-        return LoginSelectionResult(code, expires_at)
-
-    async def confirm_login(
-        self,
-        qq_id: str,
-        origin_context: str,
-        code: str,
-    ) -> LoginConfirmationResult:
-        if not code.isdigit() or len(code) != 6:
-            raise LoginSessionError("登录确认码无效或已过期")
-        now = _iso()
-
-        def operation(db: sqlite3.Connection) -> LoginConfirmationResult | None:
-            row = db.execute(
-                "SELECT * FROM pending_logins WHERE requesting_qq_id = ? "
-                "AND origin_context = ? AND status = 'awaiting_confirm' AND expires_at > ? "
-                "ORDER BY created_at DESC LIMIT 1",
-                (qq_id, origin_context, now),
+        def operation(db: sqlite3.Connection) -> LoginCompletionResult:
+            current = db.execute(
+                "SELECT * FROM pending_logins WHERE session_token_hash = ? "
+                "AND status = 'selecting' AND expires_at > ?",
+                (session_hash, now),
             ).fetchone()
-            if row is None:
-                raise LoginSessionError("登录确认码无效或已过期")
-            expected = str(row["confirm_code_hash"] or "")
-            actual = self._digest(f"login-confirm:{row['session_id']}:{code}")
-            if not hmac.compare_digest(expected, actual):
-                attempts = int(row["failed_attempts"]) + 1
-                status = (
-                    "invalid"
-                    if attempts >= self.settings.confirm_max_attempts
-                    else "awaiting_confirm"
-                )
-                db.execute(
-                    "UPDATE pending_logins SET failed_attempts = ?, status = ?, updated_at = ? "
-                    "WHERE session_id = ?",
-                    (attempts, status, now, row["session_id"]),
-                )
-                return None
-            return self._bind_confirmed(db, row, qq_id, now)
+            if current is None or not hmac.compare_digest(
+                str(current["csrf_token_hash"] or ""), csrf_hash
+            ):
+                raise LoginSessionError("登录会话无效或已过期")
+            return self._bind_completed(db, current, selected, default, player_map, now)
 
-        result = await self.database.write(operation)
-        if result is None:
-            raise LoginSessionError("登录确认码无效或已过期")
-        return result
+        return await self.database.write(operation)
 
     async def _active_session(
         self,
@@ -342,9 +357,11 @@ class LoginSessionService:
         csrf_token: str,
         origin: str,
         *,
-        statuses: tuple[str, ...] = ("active", "risk", "selecting"),
+        statuses: tuple[str, ...],
     ) -> sqlite3.Row:
-        if not session_token or not csrf_token:
+        if origin != self.settings.public_https_base_url:
+            raise LoginSessionError("登录页面来源校验失败")
+        if not self._valid_token(session_token) or not self._valid_token(csrf_token):
             raise LoginSessionError("登录会话无效或已过期")
         session_hash = self._digest(f"login-session:{session_token}")
         csrf_hash = self._digest(f"login-csrf:{csrf_token}")
@@ -358,8 +375,9 @@ class LoginSessionService:
         )
         if row is None or not hmac.compare_digest(str(row["csrf_token_hash"] or ""), csrf_hash):
             raise LoginSessionError("登录会话无效或已过期")
-        if origin != self.settings.public_https_base_url:
-            raise LoginSessionError("登录页面来源校验失败")
+        locked_until = row["locked_until"]
+        if locked_until and datetime.fromisoformat(str(locked_until)) > _now():
+            raise LoginSessionError("该登录会话尝试次数过多，请重新发起登录")
         return row
 
     async def _set_status(self, session_id: str, status: str) -> None:
@@ -372,61 +390,94 @@ class LoginSessionService:
 
     async def _check_rate_limits(
         self,
-        row: sqlite3.Row,
-        email_hmac: str,
-        ip_hmac: str,
+        row: sqlite3.Row | None,
+        identities: tuple[_RateIdentity, ...],
     ) -> None:
-        if int(row["failed_attempts"]) >= self.settings.login_session_max_attempts:
+        if (
+            row is not None
+            and int(row["failed_attempts"]) >= self.settings.login_session_max_attempts
+        ):
             raise LoginSessionError("该登录会话尝试次数过多，请重新发起登录")
         now = _now()
-        limits = (("email", email_hmac), ("ip", ip_hmac))
-        rows = await self.database.read(
+        rate_rows = await self.database.read(
             lambda db: [
                 db.execute(
                     "SELECT blocked_until FROM login_rate_limits WHERE scope = ? "
                     "AND identity_hmac = ?",
-                    identity,
+                    (scope, identity),
                 ).fetchone()
-                for identity in limits
+                for scope, identity, _maximum in identities
             ]
         )
-        if any(
-            item is not None
-            and item["blocked_until"]
-            and datetime.fromisoformat(str(item["blocked_until"])) > now
-            for item in rows
-        ):
-            raise LoginSessionError("登录尝试过于频繁，请稍后重试")
+        for item in rate_rows:
+            if item is None or not item["blocked_until"]:
+                continue
+            try:
+                blocked = datetime.fromisoformat(str(item["blocked_until"]))
+            except ValueError:
+                blocked = now + timedelta(minutes=self.settings.login_freeze_minutes)
+            if blocked > now:
+                raise LoginSessionError("登录尝试过于频繁，请稍后重试")
 
-    async def _record_failure(self, session_id: str, email_hmac: str, ip_hmac: str) -> None:
+    async def _record_failure(
+        self,
+        session_id: str | None,
+        identities: tuple[_RateIdentity, ...],
+    ) -> None:
         now = _now()
         window = timedelta(minutes=self.settings.login_rate_window_minutes)
         frozen_until = now + timedelta(minutes=self.settings.login_freeze_minutes)
 
         def operation(db: sqlite3.Connection) -> None:
-            db.execute(
-                "UPDATE pending_logins SET failed_attempts = failed_attempts + 1, updated_at = ? "
-                "WHERE session_id = ?",
-                (_iso(now), session_id),
+            retention_minutes = (
+                max(
+                    self.settings.login_rate_window_minutes,
+                    self.settings.login_freeze_minutes,
+                )
+                * 2
             )
-            for scope, identity, maximum in (
-                ("email", email_hmac, self.settings.login_email_max_attempts),
-                ("ip", ip_hmac, self.settings.login_ip_max_attempts),
-            ):
+            db.execute(
+                "DELETE FROM login_rate_limits WHERE updated_at < ?",
+                (_iso(now - timedelta(minutes=retention_minutes)),),
+            )
+            if session_id:
+                row = db.execute(
+                    "SELECT failed_attempts FROM pending_logins WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                if row is not None:
+                    attempts = int(row["failed_attempts"]) + 1
+                    locked = attempts >= self.settings.login_session_max_attempts
+                    db.execute(
+                        "UPDATE pending_logins SET failed_attempts = ?, status = CASE "
+                        "WHEN ? THEN 'locked' ELSE status END, locked_until = CASE "
+                        "WHEN ? THEN ? ELSE locked_until END, updated_at = ? WHERE session_id = ?",
+                        (
+                            attempts,
+                            locked,
+                            locked,
+                            _iso(frozen_until),
+                            _iso(now),
+                            session_id,
+                        ),
+                    )
+            for scope, identity, maximum in identities:
                 row = db.execute(
                     "SELECT attempts, window_started_at FROM login_rate_limits "
                     "WHERE scope = ? AND identity_hmac = ?",
                     (scope, identity),
                 ).fetchone()
-                if (
-                    row is None
-                    or datetime.fromisoformat(str(row["window_started_at"])) + window <= now
-                ):
+                if row is None:
                     attempts = 1
                     started = now
                 else:
-                    attempts = int(row["attempts"]) + 1
-                    started = datetime.fromisoformat(str(row["window_started_at"]))
+                    try:
+                        started = datetime.fromisoformat(str(row["window_started_at"]))
+                    except ValueError:
+                        started = now
+                    attempts = 1 if started + window <= now else int(row["attempts"]) + 1
+                    if started + window <= now:
+                        started = now
                 blocked = _iso(frozen_until) if attempts >= maximum else None
                 db.execute(
                     "INSERT INTO login_rate_limits (scope, identity_hmac, attempts, "
@@ -436,73 +487,68 @@ class LoginSessionService:
                     "blocked_until = excluded.blocked_until, updated_at = excluded.updated_at",
                     (scope, identity, attempts, _iso(started), blocked, _iso(now)),
                 )
+            db.execute(
+                "DELETE FROM login_rate_limits WHERE rowid IN ("
+                "SELECT rowid FROM login_rate_limits ORDER BY updated_at DESC "
+                f"LIMIT -1 OFFSET {_MAX_RATE_IDENTITIES})"
+            )
 
         await self.database.write(operation)
 
-    def _bind_confirmed(
+    async def _clear_rate_limits(self, identities: tuple[_RateIdentity, ...]) -> None:
+        def operation(db: sqlite3.Connection) -> None:
+            for scope, identity, _maximum in identities:
+                db.execute(
+                    "DELETE FROM login_rate_limits WHERE scope = ? AND identity_hmac = ?",
+                    (scope, identity),
+                )
+
+        await self.database.write(operation)
+
+    def _bind_completed(
         self,
         db: sqlite3.Connection,
         row: sqlite3.Row,
-        qq_id: str,
+        selected_accounts: tuple[RegionUid, ...],
+        default_account: RegionUid,
+        player_map: dict[tuple[str, str], GuidePlayer],
         now: str,
-    ) -> LoginConfirmationResult:
+    ) -> LoginCompletionResult:
         try:
             sensitive = json.loads(self.cipher.decrypt_text(str(row["encrypted_pending_tokens"])))
-            selected = tuple(json.loads(str(row["selected_uids_json"])))
-            available = self._players_from_json(str(row["available_uids_json"]))
-            selected_accounts_raw = json.loads(str(row["selected_accounts_json"] or "[]"))
             device_id = str(sensitive.pop("device_id"))
         except (CryptoError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise LoginSessionError("待确认登录数据损坏，请重新发起登录") from exc
-        default_uid = str(row["selected_default_uid"] or "")
-        default_region_id = str(row["selected_default_region_id"] or "")
-        player_map = {(player.region_id, player.uid): player for player in available}
-        if selected_accounts_raw:
-            selected_accounts = tuple(
-                (str(item["region_id"]), str(item["uid"]))
-                for item in selected_accounts_raw
-                if isinstance(item, dict)
-            )
-        else:
-            # 兼容迁移前已进入确认阶段的登录会话；重复 UID 无法安全推断区服。
-            players_by_uid: dict[str, list[GuidePlayer]] = {}
-            for player in available:
-                players_by_uid.setdefault(player.uid, []).append(player)
-            if any(len(players_by_uid.get(uid, ())) != 1 for uid in selected):
-                raise LoginSessionError("待确认 UID 区服不明确，请重新发起登录")
-            selected_accounts = tuple((players_by_uid[uid][0].region_id, uid) for uid in selected)
-            if default_uid in players_by_uid and len(players_by_uid[default_uid]) == 1:
-                default_region_id = players_by_uid[default_uid][0].region_id
-        if (
-            not selected_accounts
-            or (default_region_id, default_uid) not in selected_accounts
-            or any(account not in player_map for account in selected_accounts)
-        ):
-            raise LoginSessionError("待确认 UID 数据无效，请重新发起登录")
+            raise LoginSessionError("登录临时数据损坏，请重新发起登录") from exc
+        qq_id = str(row["requesting_qq_id"])
+        origin_context = str(row["origin_context"])
         identity_hmac = str(row["email_identity_hmac"] or "")
         email_masked = str(row["email_masked"] or "***")
+        if not identity_hmac:
+            raise LoginSessionError("登录账号标识缺失，请重新发起登录")
         credential = db.execute(
             "SELECT credential_id, qq_id FROM credentials WHERE account_identity_hmac = ?",
             (identity_hmac,),
         ).fetchone()
         if credential is not None and str(credential["qq_id"]) != qq_id:
-            raise LoginConflictError("该国际服账号或 UID 已绑定，无法重复绑定")
-        for region_id, uid in selected_accounts:
+            raise LoginConflictError("该国际服账号或游戏账号已绑定，无法重复绑定")
+        for account in selected_accounts:
             owner = db.execute(
                 "SELECT qq_id FROM game_accounts WHERE region_id = ? AND uid = ?",
-                (region_id, uid),
+                (account.region_id, account.uid),
             ).fetchone()
             if owner is not None and str(owner["qq_id"]) != qq_id:
-                raise LoginConflictError("该国际服账号或 UID 已绑定，无法重复绑定")
+                raise LoginConflictError("该国际服账号或游戏账号已绑定，无法重复绑定")
 
         db.execute(
-            "INSERT INTO users (qq_id, created_at, updated_at) VALUES (?, ?, ?) "
-            "ON CONFLICT(qq_id) DO UPDATE SET updated_at = excluded.updated_at",
-            (qq_id, now, now),
+            "INSERT INTO users (qq_id, last_origin_context, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(qq_id) DO UPDATE SET "
+            "last_origin_context = excluded.last_origin_context, updated_at = excluded.updated_at",
+            (qq_id, origin_context, now, now),
         )
         db.execute(
-            "INSERT OR IGNORE INTO profiles (qq_id, profile_type, uid, updated_at) "
-            "VALUES (?, 'local', NULL, ?)",
+            "INSERT OR IGNORE INTO profiles "
+            "(qq_id, profile_type, region_id, uid, updated_at) "
+            "VALUES (?, 'local', NULL, NULL, ?)",
             (qq_id, now),
         )
         encrypted_tokens = self.cipher.encrypt_text(
@@ -529,32 +575,33 @@ class LoginSessionService:
             credential_id = int(credential["credential_id"])
             db.execute(
                 "UPDATE credentials SET email_masked = ?, encrypted_tokens = ?, "
-                "encrypted_device_id = ?, token_status = 'valid', last_success_at = ?, "
-                "updated_at = ? WHERE credential_id = ?",
+                "encrypted_device_id = ?, token_status = 'valid', revoked_at = NULL, "
+                "last_success_at = ?, updated_at = ? WHERE credential_id = ?",
                 (email_masked, encrypted_tokens, encrypted_device, now, now, credential_id),
             )
-        for region_id, uid in selected_accounts:
-            player = player_map[(region_id, uid)]
+        for account in selected_accounts:
+            player = player_map[(account.region_id, account.uid)]
             db.execute(
                 "INSERT INTO game_accounts (region_id, uid, qq_id, credential_id, region_name, "
-                "player_name, sync_status) VALUES (?, ?, ?, ?, ?, ?, 'never') "
+                "player_name, sync_status, bound_at) VALUES (?, ?, ?, ?, ?, ?, 'never', ?) "
                 "ON CONFLICT(region_id, uid) DO UPDATE SET "
                 "credential_id = excluded.credential_id, region_name = excluded.region_name, "
                 "player_name = excluded.player_name",
                 (
-                    region_id,
-                    uid,
+                    account.region_id,
+                    account.uid,
                     qq_id,
                     credential_id,
                     player.region_name,
                     player.player_name,
+                    now,
                 ),
             )
             db.execute(
                 "INSERT OR IGNORE INTO profiles "
                 "(qq_id, profile_type, region_id, uid, updated_at) "
                 "VALUES (?, 'uid', ?, ?, ?)",
-                (qq_id, region_id, uid, now),
+                (qq_id, account.region_id, account.uid, now),
             )
         db.execute(
             "DELETE FROM credentials WHERE qq_id = ? AND NOT EXISTS ("
@@ -564,19 +611,57 @@ class LoginSessionService:
         )
         profile = db.execute(
             "SELECT profile_id FROM profiles WHERE qq_id = ? AND region_id = ? AND uid = ?",
-            (qq_id, default_region_id, default_uid),
+            (qq_id, default_account.region_id, default_account.uid),
         ).fetchone()
+        if profile is None:
+            raise LoginSessionError("默认账号档案创建失败")
         db.execute(
             "UPDATE users SET default_region_id = ?, default_uid = ?, "
-            "active_profile_id = ?, updated_at = ? "
-            "WHERE qq_id = ?",
-            (default_region_id, default_uid, int(profile["profile_id"]), now, qq_id),
+            "active_profile_id = ?, last_origin_context = ?, updated_at = ? WHERE qq_id = ?",
+            (
+                default_account.region_id,
+                default_account.uid,
+                int(profile["profile_id"]),
+                origin_context,
+                now,
+                qq_id,
+            ),
         )
-        db.execute("DELETE FROM pending_logins WHERE session_id = ?", (row["session_id"],))
-        return LoginConfirmationResult(email_masked, selected, default_uid)
+        selected_payload = [
+            {"region_id": account.region_id, "uid": account.uid} for account in selected_accounts
+        ]
+        db.execute(
+            "UPDATE pending_logins SET status = 'completed', selected_accounts_json = ?, "
+            "selected_uids_json = ?, selected_default_region_id = ?, "
+            "selected_default_uid = ?, link_used_at = ?, completed_at = ?, "
+            "session_token_hash = NULL, csrf_token_hash = NULL, "
+            "encrypted_pending_tokens = NULL, available_uids_json = NULL, "
+            "available_accounts_json = NULL, updated_at = ? WHERE session_id = ?",
+            (
+                json.dumps(selected_payload, separators=(",", ":")),
+                json.dumps([account.uid for account in selected_accounts], separators=(",", ":")),
+                default_account.region_id,
+                default_account.uid,
+                now,
+                now,
+                now,
+                row["session_id"],
+            ),
+        )
+        return LoginCompletionResult(
+            qq_id=qq_id,
+            origin_context=origin_context,
+            email_masked=email_masked,
+            selected_accounts=selected_accounts,
+            default_account=default_account,
+        )
 
     def _digest(self, value: str) -> str:
         return self.cipher.account_identity_hmac(value)
+
+    @staticmethod
+    def _valid_token(value: str) -> bool:
+        return bool(value and len(value) <= 256 and re.fullmatch(r"[A-Za-z0-9_-]+", value))
 
     @staticmethod
     def _clean_geetest(raw: dict[str, str] | None) -> dict[str, str]:
@@ -589,14 +674,44 @@ class LoginSessionService:
         }
 
     @staticmethod
+    def _parse_account(raw: dict[str, object]) -> RegionUid:
+        if not isinstance(raw, dict):
+            raise LoginSessionError("游戏账号选择格式无效")
+        region_id = str(raw.get("region_id") or "").strip()
+        uid = str(raw.get("uid") or "").strip()
+        if len(region_id) > 64 or len(uid) > 32 or not uid.isdigit():
+            raise LoginSessionError("游戏账号选择格式无效")
+        try:
+            return RegionUid(region_id, uid)
+        except ValueError as exc:
+            raise LoginSessionError("游戏账号选择格式无效") from exc
+
+    @staticmethod
     def _unique_players(players: tuple[GuidePlayer, ...]) -> tuple[GuidePlayer, ...]:
         return tuple({(player.region_id, player.uid): player for player in players}.values())
+
+    @staticmethod
+    def _players_json(players: tuple[GuidePlayer, ...]) -> str:
+        return json.dumps(
+            [
+                {
+                    "uid": player.uid,
+                    "player_name": player.player_name,
+                    "region_id": player.region_id,
+                    "region_name": player.region_name,
+                    "level": player.level,
+                }
+                for player in players
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
 
     @staticmethod
     def _players_from_json(value: str) -> tuple[GuidePlayer, ...]:
         raw = json.loads(value)
         if not isinstance(raw, list):
-            raise LoginSessionError("UID 数据格式无效")
+            raise LoginSessionError("游戏账号数据格式无效")
         return tuple(
             GuidePlayer(
                 uid=str(item["uid"]),

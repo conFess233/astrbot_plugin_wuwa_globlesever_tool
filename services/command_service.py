@@ -11,7 +11,7 @@ from .catalog import CharacterCatalog
 from .login_sessions import LoginSessionService
 from .player_data import PlayerDataService
 from .settings import PluginSettings
-from .sync import GuideSyncService, SyncError
+from .sync import GuideSyncService
 
 
 class CommandServiceError(ValueError):
@@ -65,33 +65,7 @@ class CommandService:
                 raise CommandServiceError("网页登录服务尚未初始化")
             return await self.login_sessions.create_link(actor_qq, origin_context)
         if command.name == CommandName.LOGIN_CONFIRM:
-            if self.login_sessions is None:
-                raise CommandServiceError("网页登录服务尚未初始化")
-            result = await self.login_sessions.confirm_login(
-                actor_qq,
-                origin_context,
-                command.arguments[0],
-            )
-            uids = "、".join(
-                f"{uid}（默认）" if uid == result.default_uid else uid
-                for uid in result.selected_uids
-            )
-            message = f"国际服账号绑定成功\n账号：{result.email_masked}\nUID：{uids}"
-            if self.sync_service is None:
-                return f"{message}\n角色数据：同步服务尚未初始化"
-            try:
-                synced = await self.sync_service.sync(actor_qq, result.default_uid)
-                if self.player_data is not None:
-                    try:
-                        await self.player_data.query(actor_qq, uid=result.default_uid)
-                    except PlayerDataError as exc:
-                        return (
-                            f"{message}\n首次同步：{synced.owned_count} 个角色"
-                            f"\n账号详情刷新失败：{exc}"
-                        )
-                return f"{message}\n首次同步：{synced.owned_count} 个角色"
-            except SyncError as exc:
-                return f"{message}\n首次同步失败：{exc}"
+            return "网页登录选择账号后会直接完成绑定，无需再发送 QQ 登录确认码。"
         if command.name == CommandName.ACCOUNT:
             if self.accounts is None:
                 profile = await self.repository.active_profile(actor_qq)

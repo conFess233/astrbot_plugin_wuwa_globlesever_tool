@@ -64,8 +64,9 @@ class MasterKeyProvider:
     @staticmethod
     def _decode_environment_key(value: str) -> bytes:
         try:
-            key = base64.urlsafe_b64decode(value.encode())
-        except (ValueError, TypeError) as exc:
+            padded = value + ("=" * (-len(value) % 4))
+            key = base64.b64decode(padded.encode(), altchars=b"-_", validate=True)
+        except (binascii.Error, ValueError, TypeError) as exc:
             raise CryptoError("环境变量主密钥不是有效的 URL-safe Base64") from exc
         if len(key) != _KEY_BYTES:
             raise CryptoError("环境变量主密钥解码后必须为 32 字节")
@@ -93,7 +94,9 @@ class TokenCipher:
         if not envelope.startswith(_ENVELOPE_PREFIX):
             raise CryptoError("不支持的密文版本")
         try:
-            payload = base64.urlsafe_b64decode(envelope.removeprefix(_ENVELOPE_PREFIX))
+            encoded = envelope.removeprefix(_ENVELOPE_PREFIX)
+            padded = encoded + ("=" * (-len(encoded) % 4))
+            payload = base64.b64decode(padded.encode(), altchars=b"-_", validate=True)
             nonce, ciphertext = payload[:_NONCE_BYTES], payload[_NONCE_BYTES:]
             if len(nonce) != _NONCE_BYTES or not ciphertext:
                 raise ValueError("密文长度无效")

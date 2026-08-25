@@ -3,192 +3,309 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
+  <meta name="color-scheme" content="dark">
   <title>鸣潮国际服账号登录</title>
   <style>
     :root {
-      color-scheme: light;
-      --primary: #7367f0;
-      --primary-soft: #edeafd;
-      --primary-hover: #685dd8;
-      --warning: #ff9f43;
-      --warning-soft: #fff2e2;
-      --info: #00bad1;
-      --info-soft: #e0f7fa;
-      --page: #f7f7f9;
-      --surface: #ffffff;
-      --surface-raised: #ffffff;
-      --text: #2f2b3d;
-      --muted: #6d6b77;
-      --border: #e6e5e8;
-      --shadow-sm: 0 2px 8px rgba(47, 43, 61, .08);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color-scheme: dark;
+      --page: #0d1014;
+      --surface: rgba(25, 29, 35, .94);
+      --surface-2: #20252c;
+      --surface-3: #272d35;
+      --line: rgba(255, 255, 255, .09);
+      --line-strong: rgba(218, 188, 119, .34);
+      --text: #f4f1e9;
+      --muted: #989da4;
+      --gold: #dabc77;
+      --gold-strong: #f0d99c;
+      --gold-soft: rgba(218, 188, 119, .12);
+      --danger: #e28f87;
+      --success: #8fc5a0;
+      --radius: 16px;
+      font-family: "HarmonyOS Sans SC", "Microsoft YaHei", system-ui, sans-serif;
     }
     * { box-sizing: border-box; }
-    html { min-width: 320px; background: var(--page); }
-    body { margin: 0; min-height: 100vh; padding: 48px 20px; background: var(--page); color: var(--text); font-size: 14px; line-height: 1.5; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 34px 16px;
+      background:
+        radial-gradient(circle at 16% 0%, rgba(218, 188, 119, .08), transparent 30%),
+        linear-gradient(160deg, #0b0e12 0%, #11151a 55%, #0b0e12 100%);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.55;
+    }
     button, input { font: inherit; }
     button, label, input[type="checkbox"], input[type="radio"] { cursor: pointer; }
-    .auth-shell { width: min(100%, 620px); margin: 0 auto; }
-    .page-header { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
-    .brand-icon { display: grid; flex: 0 0 46px; width: 46px; height: 46px; place-items: center; border-radius: 12px; background: var(--primary-soft); color: var(--primary); }
-    .brand-icon svg { width: 25px; height: 25px; }
-    .line-icon { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-    h1 { margin: 0 0 2px; font-size: 25px; line-height: 1.25; letter-spacing: -.02em; }
-    .page-subtitle { margin: 0; color: var(--muted); font-size: 13px; }
-    .section-card { padding: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-sm); }
-    .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
-    .eyebrow { display: block; margin-bottom: 4px; color: var(--primary); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
-    h2 { margin: 0; font-size: 18px; line-height: 1.35; }
-    .lead { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
-    .section-icon { display: grid; flex: 0 0 42px; width: 42px; height: 42px; place-items: center; border-radius: 10px; background: var(--primary-soft); color: var(--primary); }
-    .section-icon svg { width: 21px; height: 21px; }
-    form { margin: 0; }
-    .field { display: grid; gap: 7px; margin: 0 0 16px; color: var(--muted); font-size: 12px; font-weight: 600; }
-    input[type="email"], input[type="password"] { width: 100%; min-height: 42px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 7px; outline: 0; background: var(--surface-raised); color: var(--text); cursor: text; transition: border-color .18s ease, box-shadow .18s ease; }
-    input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
-    input[type="checkbox"], input[type="radio"] { width: 17px; height: 17px; margin: 0; accent-color: var(--primary); }
-    .btn { display: inline-flex; width: 100%; min-height: 42px; align-items: center; justify-content: center; gap: 7px; padding: 9px 15px; border: 1px solid transparent; border-radius: 8px; background: var(--primary); color: #fff; font-weight: 600; line-height: 1; box-shadow: 0 3px 8px rgba(115, 103, 240, .28); transition: background-color .18s ease, box-shadow .18s ease, transform .18s ease; }
-    .btn:hover:not(:disabled) { background: var(--primary-hover); transform: translateY(-1px); }
-    .btn:disabled { cursor: wait; opacity: .55; }
-    .status { min-height: 0; margin: 16px 0 0; padding: 11px 13px; border: 1px solid rgba(255, 159, 67, .28); border-radius: 9px; background: var(--warning-soft); color: var(--text); line-height: 1.5; }
-    .status:empty { display: none; }
-    .hidden { display: none !important; }
-    .players { display: grid; gap: 10px; margin: 18px 0; }
-    .player { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; margin: 0; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); transition: border-color .18s ease, box-shadow .18s ease; }
-    .player:hover { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
-    .player span { min-width: 0; }
-    .player strong, .player small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .player small { margin-top: 3px; color: var(--muted); font-size: 11px; }
-    .default { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); font-size: 12px; font-weight: 600; }
-    .code { margin: 20px 0; padding: 20px 12px; border: 1px solid rgba(115, 103, 240, .28); border-radius: 10px; background: var(--primary-soft); color: var(--primary); text-align: center; font: 700 clamp(30px, 10vw, 48px) ui-monospace, SFMono-Regular, Consolas, monospace; letter-spacing: .14em; }
-    .security-note { display: flex; align-items: flex-start; gap: 11px; margin-top: 16px; padding: 13px 14px; border: 1px solid rgba(0, 186, 209, .28); border-radius: 10px; background: var(--info-soft); }
-    .security-note svg { flex: 0 0 19px; width: 19px; margin-top: 1px; color: var(--info); }
-    .security-note p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
-    .security-note strong { color: var(--text); }
-    @media (prefers-color-scheme: dark) {
-      :root { color-scheme: dark; --primary-soft: rgba(115, 103, 240, .18); --warning-soft: rgba(255, 159, 67, .16); --info-soft: rgba(0, 186, 209, .16); --page: #25293c; --surface: #2f3349; --surface-raised: #363a50; --text: #e7e3fc; --muted: #b6b3c2; --border: #44485f; --shadow-sm: 0 2px 10px rgba(12, 14, 22, .22); }
+    .shell { width: min(100%, 520px); margin: 0 auto; }
+    .brand { display: flex; align-items: center; gap: 13px; margin: 0 4px 18px; }
+    .brand-mark {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      flex: 0 0 42px;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 13px;
+      background: linear-gradient(145deg, rgba(218, 188, 119, .18), rgba(218, 188, 119, .04));
+      color: var(--gold-strong);
+      box-shadow: inset 0 1px rgba(255, 255, 255, .06);
     }
-    @media (max-width: 560px) {
-      body { padding: 22px 12px; }
-      .page-header { gap: 10px; margin-bottom: 16px; }
-      .brand-icon { flex-basis: 40px; width: 40px; height: 40px; }
-      h1 { font-size: 20px; }
-      .section-card { padding: 18px 16px; }
-      .section-heading { margin-bottom: 18px; }
-      .section-icon { display: none; }
+    .brand-mark svg { width: 23px; height: 23px; }
+    .line-icon { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    h1 { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: .01em; }
+    .brand p { margin: 1px 0 0; color: var(--muted); font-size: 12px; }
+    .panel {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: 0 22px 55px rgba(0, 0, 0, .32), inset 0 1px rgba(255, 255, 255, .035);
+      backdrop-filter: blur(18px);
+    }
+    .panel-accent { height: 2px; background: linear-gradient(90deg, transparent, var(--gold), transparent); opacity: .72; }
+    .panel-body { padding: 25px; }
+    .step { display: flex; align-items: center; gap: 8px; margin-bottom: 18px; }
+    .step span {
+      display: grid;
+      width: 24px;
+      height: 24px;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      color: #747a82;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .step span.active { border-color: var(--line-strong); background: var(--gold-soft); color: var(--gold-strong); }
+    .step i { width: 24px; height: 1px; background: var(--line); }
+    h2 { margin: 0; font-size: 19px; font-weight: 620; }
+    .lead { margin: 6px 0 20px; color: var(--muted); font-size: 13px; }
+    .field { display: grid; gap: 7px; margin-bottom: 15px; color: #c8c9c6; font-size: 12px; font-weight: 600; }
+    input[type="email"], input[type="password"] {
+      width: 100%;
+      height: 43px;
+      padding: 0 13px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      outline: 0;
+      background: var(--surface-2);
+      color: var(--text);
+      cursor: text;
+      transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+    input::placeholder { color: #6f747b; }
+    input:focus { border-color: var(--line-strong); background: var(--surface-3); box-shadow: 0 0 0 3px var(--gold-soft); }
+    input[type="checkbox"], input[type="radio"] { width: 17px; height: 17px; margin: 0; accent-color: #c7a95f; }
+    .button {
+      display: inline-flex;
+      width: 100%;
+      min-height: 43px;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(240, 217, 156, .34);
+      border-radius: 11px;
+      background: linear-gradient(135deg, #c5a45c, #e1c77e);
+      color: #16130d;
+      font-weight: 700;
+      box-shadow: 0 8px 22px rgba(184, 144, 59, .16);
+      transition: transform .18s ease, filter .18s ease;
+    }
+    .button:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.05); }
+    .button:disabled { cursor: wait; opacity: .55; }
+    .account-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 0 0 14px;
+      padding: 11px 13px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: rgba(255, 255, 255, .025);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .account-summary strong { color: var(--text); font-weight: 600; }
+    .players { display: grid; gap: 9px; margin: 0 0 17px; }
+    .player {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 11px;
+      align-items: center;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: linear-gradient(145deg, rgba(255, 255, 255, .035), rgba(255, 255, 255, .015));
+      transition: border-color .18s ease, background .18s ease;
+    }
+    .player:has(input[name="account"]:checked) { border-color: var(--line-strong); background: var(--gold-soft); }
+    .player-copy { min-width: 0; }
+    .player-copy strong, .player-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .player-copy strong { font-weight: 620; }
+    .player-copy small { margin-top: 2px; color: var(--muted); font-size: 11px; }
+    .default { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+    .status {
+      margin: 15px 0 0;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, .025);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .status:empty { display: none; }
+    .status[data-kind="error"] { border-color: rgba(226, 143, 135, .28); color: var(--danger); }
+    .status[data-kind="success"] { border-color: rgba(143, 197, 160, .28); color: var(--success); }
+    .done { padding: 12px 0 4px; text-align: center; }
+    .done-mark {
+      display: grid;
+      width: 52px;
+      height: 52px;
+      margin: 0 auto 15px;
+      place-items: center;
+      border: 1px solid rgba(143, 197, 160, .35);
+      border-radius: 50%;
+      background: rgba(143, 197, 160, .1);
+      color: var(--success);
+      font-size: 24px;
+    }
+    .privacy {
+      display: flex;
+      gap: 9px;
+      margin: 14px 4px 0;
+      color: #777d84;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+    .privacy svg { width: 16px; height: 16px; flex: 0 0 16px; margin-top: 1px; color: #989078; }
+    .hidden { display: none !important; }
+    @media (max-width: 540px) {
+      body { padding: 20px 11px; }
+      .panel-body { padding: 20px 16px; }
       .player { grid-template-columns: auto minmax(0, 1fr); }
       .default { grid-column: 2; }
     }
   </style>
 </head>
 <body>
-<main class="auth-shell">
-  <header class="page-header">
-    <span class="brand-icon" aria-hidden="true">
-      <svg class="line-icon" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"></path></svg>
+<main class="shell">
+  <header class="brand">
+    <span class="brand-mark" aria-hidden="true">
+      <svg class="line-icon" viewBox="0 0 24 24"><path d="M4 12c3.2-5.8 12.8-5.8 16 0-3.2 5.8-12.8 5.8-16 0Z"></path><circle cx="12" cy="12" r="2.4"></circle></svg>
     </span>
-    <div><h1>鸣潮国际服数据工具</h1><p class="page-subtitle">安全绑定国际服账号</p></div>
+    <div><h1>鸣潮国际服数据工具</h1><p>账号绑定 · 独立安全入口</p></div>
   </header>
 
-  <article class="section-card">
-    <div class="section-heading">
-      <div><span class="eyebrow">Wuthering Waves · Global</span><h2>绑定国际服账号</h2><p class="lead" id="lead">凭据仅用于本次登录，不会保存密码。完成网页步骤后，还需回到发起登录的 QQ 会话确认。</p></div>
-      <span class="section-icon" aria-hidden="true"><svg class="line-icon" viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5zM12 15v2"></path></svg></span>
+  <article class="panel">
+    <div class="panel-accent"></div>
+    <div class="panel-body">
+      <div class="step" aria-label="登录步骤"><span id="step-1" class="active">1</span><i></i><span id="step-2">2</span><i></i><span id="step-3">3</span></div>
+
+      <section id="login-stage">
+        <h2>登录国际服账号</h2>
+        <p class="lead">密码只用于本次官方登录请求，不会写入插件数据库。</p>
+        <form id="login-form">
+          <label class="field"><span>邮箱</span><input id="email" type="email" autocomplete="username" maxlength="320" placeholder="name@example.com" required></label>
+          <label class="field"><span>密码</span><input id="password" type="password" autocomplete="current-password" maxlength="256" placeholder="请输入账号密码" required></label>
+          <div id="captcha"></div>
+          <button id="login-button" class="button" type="submit">登录并读取游戏账号</button>
+        </form>
+      </section>
+
+      <section id="select-stage" class="hidden">
+        <h2>选择要绑定的账号</h2>
+        <p class="lead">不同区服的 UID 独立处理。可多选，并指定一个当前默认账号。</p>
+        <div class="account-summary"><span>登录账号</span><strong id="email-masked">***</strong></div>
+        <form id="select-form">
+          <div id="players" class="players"></div>
+          <button id="complete-button" class="button" type="submit">完成绑定</button>
+        </form>
+      </section>
+
+      <section id="done-stage" class="done hidden">
+        <div class="done-mark">✓</div>
+        <h2>绑定完成</h2>
+        <p class="lead">Bot 正在原 QQ 会话发送结果并刷新默认账号数据。现在可以安全关闭此页面。</p>
+      </section>
+
+      <p id="status" class="status" role="status" aria-live="polite"></p>
     </div>
-
-    <section id="login-stage">
-      <form id="login-form">
-        <label class="field"><span>国际服邮箱</span><input id="email" type="email" autocomplete="username" maxlength="320" placeholder="name@example.com" required></label>
-        <label class="field"><span>密码</span><input id="password" type="password" autocomplete="current-password" maxlength="256" placeholder="请输入账号密码" required></label>
-        <div id="captcha"></div>
-        <button id="login-button" class="btn" type="submit">登录并读取 UID</button>
-      </form>
-    </section>
-
-    <section id="select-stage" class="hidden">
-      <div class="section-heading"><div><span class="eyebrow">账号角色</span><h2>选择要绑定的 UID</h2><p class="lead">至少选择一个，并指定一个默认 UID。未选择的已有绑定不会被删除。</p></div></div>
-      <form id="select-form">
-        <div id="players" class="players"></div>
-        <button id="select-button" class="btn" type="submit">生成 QQ 确认码</button>
-      </form>
-    </section>
-
-    <section id="confirm-stage" class="hidden">
-      <div class="section-heading"><div><span class="eyebrow">最后一步</span><h2>回到 QQ 完成确认</h2></div></div>
-      <div id="confirmation-code" class="code"></div>
-      <p class="lead">在原 QQ 会话发送：<strong>/kh 登录确认 上方确认码</strong></p>
-    </section>
-
-    <p id="status" class="status" role="status" aria-live="polite"></p>
   </article>
 
-  <aside class="security-note">
-    <svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5m0-9h.01"></path></svg>
-    <p><strong>安全提醒：</strong>不要把登录链接、验证码或页面内容转发给他人。关闭页面会清除浏览器内的临时会话。</p>
+  <aside class="privacy">
+    <svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.7 2.8 8 7 10 4.2-2 7-5.3 7-10V6l-7-3Z"></path><path d="M9.5 12.2 11.2 14l3.7-4"></path></svg>
+    <span>请勿转发登录链接或页面内容。会话使用安全 Cookie，完成、取消或过期后立即失效。</span>
   </aside>
 </main>
+
 <script>
 (() => {
   "use strict";
-  const marker = "/login/";
-  const markerIndex = location.pathname.lastIndexOf(marker);
-  const apiBase = markerIndex >= 0 ? location.pathname.slice(0, markerIndex + marker.length - 1) : "";
-  const initialToken = markerIndex >= 0 ? decodeURIComponent(location.pathname.slice(markerIndex + marker.length)) : "";
-  const state = { sessionToken: "", csrfToken: "", geetest: null, players: [] };
+  const state = { players: [], geetest: null };
   const $ = (id) => document.getElementById(id);
-  const status = (message) => { $("status").textContent = message || ""; };
-  const busy = (button, value) => { button.disabled = value; };
+  const csrf = () => decodeURIComponent((document.cookie.split("; ").find((row) => row.startsWith("wuwa_login_csrf=")) || "=").split("=").slice(1).join("="));
+  const setStatus = (message, kind = "") => { $("status").textContent = message || ""; $("status").dataset.kind = kind; };
+  const setBusy = (button, value) => { button.disabled = value; };
 
   async function post(path, payload) {
-    const response = await fetch(`${apiBase}/${path}`, {
+    const response = await fetch(`/api/session/${path}`, {
       method: "POST",
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf() },
+      body: JSON.stringify(payload || {}),
     });
     let data = {};
-    try { data = await response.json(); } catch (_) { /* 显示统一错误 */ }
-    if (!response.ok) throw new Error(data.message || data.error || "请求失败，请重新发起登录");
+    try { data = await response.json(); } catch (_) { /* 统一错误 */ }
+    if (!response.ok) throw new Error(data.message || "请求失败，请重新发起登录");
     return data;
   }
 
-  async function exchange() {
-    if (!apiBase || !initialToken || initialToken === "session") throw new Error("登录链接无效或已过期");
-    const data = await post("exchange", { link_token: initialToken });
-    state.sessionToken = data.session_token;
-    state.csrfToken = data.csrf_token;
-    history.replaceState({}, "", `${apiBase}/session`);
+  function showStage(name) {
+    ["login", "select", "done"].forEach((item) => $(`${item}-stage`).classList.toggle("hidden", item !== name));
+    $("step-1").classList.toggle("active", name === "login");
+    $("step-2").classList.toggle("active", name === "select");
+    $("step-3").classList.toggle("active", name === "done");
+  }
+
+  async function bootstrap() {
+    if (!csrf()) throw new Error("登录会话无效或已过期");
+    const data = await post("accounts", {});
+    if (data.status === "selecting") {
+      state.players = Array.isArray(data.players) ? data.players : [];
+      renderPlayers(data.email_masked);
+      showStage("select");
+      return;
+    }
+    showStage("login");
   }
 
   async function submitCredentials(event, geetest = null) {
     if (event) event.preventDefault();
     const button = $("login-button");
-    busy(button, true);
-    status("正在安全登录并读取账号 UID…");
+    setBusy(button, true);
+    setStatus("正在登录并读取区服账号…");
     try {
-      const data = await post("submit", {
-        session_token: state.sessionToken,
-        csrf_token: state.csrfToken,
+      const data = await post(geetest ? "captcha" : "login", {
         email: $("email").value,
         password: $("password").value,
         geetest,
       });
       if (data.status === "risk") {
-        status("需要完成人机验证。验证成功后会自动继续。");
+        setStatus("需要完成人机验证，验证成功后会继续登录。");
         await showGeetest(data.captcha_id);
         return;
       }
       $("password").value = "";
       state.players = Array.isArray(data.players) ? data.players : [];
-      renderPlayers();
-      $("login-stage").classList.add("hidden");
-      $("select-stage").classList.remove("hidden");
-      status("");
+      renderPlayers(data.email_masked);
+      showStage("select");
+      setStatus("");
     } catch (error) {
-      status(error.message);
+      setStatus(error.message, "error");
     } finally {
-      busy(button, false);
+      setBusy(button, false);
     }
   }
 
@@ -206,59 +323,73 @@
     window.initGeetest4({ captchaId, product: "bind" }, (captcha) => {
       state.geetest = captcha;
       captcha.appendTo("#captcha");
-      captcha.onSuccess(() => {
-        const value = captcha.getValidate() || {};
-        submitCredentials(null, value);
-      });
+      captcha.onSuccess(() => submitCredentials(null, captcha.getValidate() || {}));
       captcha.showCaptcha();
     });
   }
 
-  function renderPlayers() {
+  function renderPlayers(emailMasked) {
+    $("email-masked").textContent = emailMasked || "***";
     const host = $("players");
     host.replaceChildren();
     state.players.forEach((player, index) => {
-      const row = document.createElement("div"); row.className = "player";
-      const selected = document.createElement("input"); selected.type = "checkbox"; selected.name = "uid";
-      selected.value = player.uid; selected.checked = true;
-      const text = document.createElement("span");
-      const title = document.createElement("strong"); title.textContent = player.player_name ? `${player.player_name} · ${player.uid}` : player.uid;
-      const meta = document.createElement("small"); meta.textContent = `${player.region_name || player.region_id}${player.level == null ? "" : ` · Lv.${player.level}`}`;
-      text.append(title, meta);
-      const defaultLabel = document.createElement("label"); defaultLabel.className = "default";
-      const defaultRadio = document.createElement("input"); defaultRadio.type = "radio"; defaultRadio.name = "default_uid";
-      defaultRadio.value = player.uid; defaultRadio.checked = index === 0;
-      defaultLabel.append(defaultRadio, document.createTextNode("默认"));
-      defaultRadio.addEventListener("change", () => { if (defaultRadio.checked) selected.checked = true; });
-      selected.addEventListener("change", () => { if (!selected.checked && defaultRadio.checked) defaultRadio.checked = false; });
-      row.append(selected, text, defaultLabel); host.append(row);
+      const row = document.createElement("div");
+      row.className = "player";
+      const selected = document.createElement("input");
+      selected.type = "checkbox";
+      selected.name = "account";
+      selected.value = String(index);
+      selected.checked = true;
+      const copy = document.createElement("span");
+      copy.className = "player-copy";
+      const title = document.createElement("strong");
+      title.textContent = player.player_name || `UID ${player.uid}`;
+      const meta = document.createElement("small");
+      meta.textContent = `${player.region_name || player.region_id} · UID ${player.uid}${player.level == null ? "" : ` · Lv.${player.level}`}`;
+      copy.append(title, meta);
+      const defaultLabel = document.createElement("label");
+      defaultLabel.className = "default";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "default_account";
+      radio.value = String(index);
+      radio.checked = index === 0;
+      radio.addEventListener("change", () => { if (radio.checked) selected.checked = true; });
+      selected.addEventListener("change", () => { if (!selected.checked && radio.checked) radio.checked = false; });
+      defaultLabel.append(radio, document.createTextNode("默认"));
+      row.append(selected, copy, defaultLabel);
+      host.append(row);
     });
   }
 
-  async function selectPlayers(event) {
+  async function complete(event) {
     event.preventDefault();
-    const button = $("select-button"); busy(button, true); status("正在生成确认码…");
+    const button = $("complete-button");
+    setBusy(button, true);
+    setStatus("正在保存绑定关系…");
     try {
-      const selected = [...document.querySelectorAll('input[name="uid"]:checked')].map((item) => item.value);
-      const defaultItem = document.querySelector('input[name="default_uid"]:checked');
-      const data = await post("select", {
-        session_token: state.sessionToken,
-        csrf_token: state.csrfToken,
-        selected_uids: selected,
-        default_uid: defaultItem ? defaultItem.value : "",
+      const indexes = [...document.querySelectorAll('input[name="account"]:checked')].map((item) => Number(item.value));
+      const defaultInput = document.querySelector('input[name="default_account"]:checked');
+      const selectedAccounts = indexes.map((index) => ({ region_id: state.players[index].region_id, uid: state.players[index].uid }));
+      const defaultPlayer = defaultInput ? state.players[Number(defaultInput.value)] : null;
+      if (!defaultPlayer) throw new Error("请选择默认账号");
+      await post("complete", {
+        selected_accounts: selectedAccounts,
+        default_account: { region_id: defaultPlayer.region_id, uid: defaultPlayer.uid },
       });
-      $("confirmation-code").textContent = data.confirmation_code;
-      $("select-stage").classList.add("hidden");
-      $("confirm-stage").classList.remove("hidden");
-      status("确认码仅可使用一次，并会很快过期。");
-    } catch (error) { status(error.message); } finally { busy(button, false); }
+      showStage("done");
+      setStatus("绑定成功", "success");
+    } catch (error) {
+      setStatus(error.message, "error");
+      setBusy(button, false);
+    }
   }
 
   $("login-form").addEventListener("submit", submitCredentials);
-  $("select-form").addEventListener("submit", selectPlayers);
-  exchange().catch((error) => {
+  $("select-form").addEventListener("submit", complete);
+  bootstrap().catch((error) => {
     $("login-form").querySelectorAll("input,button").forEach((item) => { item.disabled = true; });
-    status(error.message);
+    setStatus(error.message, "error");
   });
 })();
 </script>

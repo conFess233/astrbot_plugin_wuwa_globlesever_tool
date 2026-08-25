@@ -7,6 +7,7 @@ from .v002_login_security import migrate as migrate_v2
 from .v003_source_order import migrate as migrate_v3
 from .v004_player_snapshot import migrate as migrate_v4
 from .v005_region_uid_redesign import migrate as migrate_v5
+from .v006_login_completion import migrate as migrate_v6
 
 _MIGRATIONS = {
     1: migrate_v1,
@@ -14,6 +15,7 @@ _MIGRATIONS = {
     3: migrate_v3,
     4: migrate_v4,
     5: migrate_v5,
+    6: migrate_v6,
 }
 
 

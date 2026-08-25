@@ -1,5 +1,6 @@
 """把 AstrBot 原始配置转换为经过边界校验的运行设置。"""
 
+import ipaddress
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ class PluginSettings:
     login_server_host: str
     login_server_port: int
     login_trust_proxy_headers: bool
+    login_trusted_proxy_cidrs: tuple[str, ...]
     extra_command_roots: tuple[str, ...]
     keyword_help: tuple[str, ...]
     keyword_login: tuple[str, ...]
@@ -73,6 +75,7 @@ class PluginSettings:
             login_server_host=login_server_host,
             login_server_port=cls._bounded_int(values, "login_server_port", 6199, 1024, 65535),
             login_trust_proxy_headers=bool(values.get("login_trust_proxy_headers", True)),
+            login_trusted_proxy_cidrs=cls._networks(values.get("login_trusted_proxy_cidrs", [])),
             extra_command_roots=roots,
             keyword_help=cls._keywords(values, "keyword_help", ("kh帮助", "鸣潮帮助")),
             keyword_login=cls._keywords(values, "keyword_login", ("kh登录", "鸣潮登录")),
@@ -86,7 +89,7 @@ class PluginSettings:
                 values, "keyword_exploration", ("kh探索", "鸣潮探索")
             ),
             allow_query_others=bool(values.get("allow_query_others", False)),
-            login_link_ttl_minutes=cls._bounded_int(values, "login_link_ttl_minutes", 5, 1, 30),
+            login_link_ttl_minutes=cls._bounded_int(values, "login_link_ttl_minutes", 3, 1, 60),
             confirm_ttl_minutes=cls._bounded_int(values, "confirm_ttl_minutes", 5, 1, 30),
             confirm_max_attempts=cls._bounded_int(values, "confirm_max_attempts", 5, 1, 10),
             login_rate_window_minutes=cls._bounded_int(
@@ -155,3 +158,20 @@ class PluginSettings:
                 roots.append(root)
                 normalized_seen.add(folded)
         return tuple(roots)
+
+    @staticmethod
+    def _networks(raw: Any) -> tuple[str, ...]:
+        if not isinstance(raw, list):
+            raise SettingsError("可信代理网段必须是列表")
+        networks: list[str] = []
+        for item in raw:
+            value = str(item).strip()
+            if not value:
+                continue
+            try:
+                normalized = str(ipaddress.ip_network(value, strict=False))
+            except ValueError as exc:
+                raise SettingsError(f"可信代理网段无效：{value}") from exc
+            if normalized not in networks:
+                networks.append(normalized)
+        return tuple(networks)

@@ -143,7 +143,7 @@ class BackupService:
         self,
         target: Path,
         config: dict[str, object],
-        include_encrypted_credentials: bool,
+        _include_encrypted_credentials: bool,
     ) -> None:
         with tempfile.TemporaryDirectory(dir=self.paths.backups) as temporary:
             root = Path(temporary)
@@ -157,11 +157,13 @@ class BackupService:
                     destination.execute("DELETE FROM pending_logins")
                     destination.execute("DELETE FROM pending_actions")
                     destination.execute("DELETE FROM login_rate_limits")
-                    if not include_encrypted_credentials:
-                        destination.execute(
-                            "UPDATE credentials SET encrypted_tokens = '', "
-                            "encrypted_device_id = '', token_status = 'needs_login'"
-                        )
+                    destination.execute("UPDATE users SET last_origin_context = NULL")
+                    destination.execute(
+                        "UPDATE credentials SET encrypted_tokens = '', "
+                        "encrypted_device_id = '', token_status = 'needs_login', "
+                        "expires_at = NULL, revoked_at = NULL, "
+                        "notification_suppressed_until = NULL"
+                    )
             finally:
                 destination.close()
                 source.close()
@@ -191,7 +193,7 @@ class BackupService:
                 "plugin_version": PLUGIN_VERSION,
                 "schema_version": SCHEMA_VERSION,
                 "created_at": datetime.now(UTC).isoformat(),
-                "includes_encrypted_credentials": include_encrypted_credentials,
+                "includes_encrypted_credentials": False,
                 "files": {name: _sha256(root / name) for name in files},
             }
             (root / _MANIFEST_ENTRY).write_text(
@@ -357,11 +359,17 @@ class BackupService:
                     str(row["encrypted_device_id"] or "") if restore_credentials else ""
                 )
                 token_status = row["token_status"] if restore_credentials else "needs_login"
+                expires_at = row["expires_at"] if restore_credentials else None
+                revoked_at = row["revoked_at"] if restore_credentials else None
+                suppressed_until = (
+                    row["notification_suppressed_until"] if restore_credentials else None
+                )
                 if existing is None:
                     cursor = target.execute(
                         "INSERT INTO credentials (qq_id, account_identity_hmac, email_masked, "
                         "encrypted_tokens, encrypted_device_id, token_status, last_success_at, "
-                        "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        "expires_at, revoked_at, notification_suppressed_until, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             row["qq_id"],
                             row["account_identity_hmac"],
@@ -370,6 +378,9 @@ class BackupService:
                             encrypted_device,
                             token_status,
                             row["last_success_at"] if restore_credentials else None,
+                            expires_at,
+                            revoked_at,
+                            suppressed_until,
                             _iso(),
                         ),
                     )
@@ -381,6 +392,7 @@ class BackupService:
                         target.execute(
                             "UPDATE credentials SET email_masked = ?, encrypted_tokens = ?, "
                             "encrypted_device_id = ?, token_status = ?, last_success_at = ?, "
+                            "expires_at = ?, revoked_at = ?, notification_suppressed_until = ?, "
                             "updated_at = ? WHERE credential_id = ?",
                             (
                                 row["email_masked"],
@@ -388,6 +400,9 @@ class BackupService:
                                 encrypted_device,
                                 token_status,
                                 row["last_success_at"],
+                                expires_at,
+                                revoked_at,
+                                suppressed_until,
                                 _iso(),
                                 destination_id,
                             ),
@@ -416,13 +431,15 @@ class BackupService:
                     row["last_sync_attempt_at"],
                     row["last_sync_success_at"],
                     row["last_error_category"],
+                    row["bound_at"],
                     row["uid"],
                 )
                 if existing is None:
                     target.execute(
                         "INSERT INTO game_accounts (qq_id, credential_id, region_id, region_name, "
                         "player_name, sync_status, last_sync_attempt_at, last_sync_success_at, "
-                        "last_error_category, uid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "last_error_category, bound_at, uid) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         values,
                     )
                     counts["accounts"] += 1
@@ -431,7 +448,8 @@ class BackupService:
                         "UPDATE game_accounts SET qq_id = ?, credential_id = ?, region_id = ?, "
                         "region_name = ?, player_name = ?, sync_status = ?, "
                         "last_sync_attempt_at = ?, last_sync_success_at = ?, "
-                        "last_error_category = ? WHERE region_id = ? AND uid = ?",
+                        "last_error_category = ?, bound_at = ? "
+                        "WHERE region_id = ? AND uid = ?",
                         (*values[:-1], row["region_id"], row["uid"]),
                     )
 

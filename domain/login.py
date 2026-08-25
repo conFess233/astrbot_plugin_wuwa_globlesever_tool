@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from .models import RegionUid
+
 
 class AuthenticationError(RuntimeError):
     """表示登录失败，并仅携带可安全展示的稳定分类。"""
@@ -97,16 +99,21 @@ class LoginSubmitResult:
     risk_required: bool
     captcha_id: str | None = None
     players: tuple[GuidePlayer, ...] = ()
+    email_masked: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class LoginSelectionResult:
-    confirmation_code: str
+class BrowserLoginState:
+    status: str
     expires_at: datetime
+    email_masked: str | None = None
+    players: tuple[GuidePlayer, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
-class LoginConfirmationResult:
+class LoginCompletionResult:
+    qq_id: str
+    origin_context: str
     email_masked: str
-    selected_uids: tuple[str, ...]
-    default_uid: str
+    selected_accounts: tuple[RegionUid, ...]
+    default_account: RegionUid

@@ -206,7 +206,11 @@ class GlobalAuthClient:
     async def _sdk_form(self, path: str, fields: dict[str, str]) -> dict[str, Any]:
         session = self._session()
         try:
-            async with session.post(f"{_SDK_BASE}{path}", data=fields) as response:
+            async with session.post(
+                f"{_SDK_BASE}{path}",
+                data=fields,
+                allow_redirects=False,
+            ) as response:
                 if response.status >= 500:
                     raise AuthenticationUnavailableError("国际服登录服务暂时不可用")
                 if response.status != 200:
@@ -236,6 +240,7 @@ class GlobalAuthClient:
                     f"{base}{path}",
                     headers=headers,
                     json=json_body,
+                    allow_redirects=False,
                 ) as response:
                     if response.status in {401, 403}:
                         raise AuthenticationError("攻略站登录状态无效")

@@ -21,7 +21,13 @@
     "description": "信任反向代理来源 IP 请求头",
     "type": "bool",
     "default": true,
-    "hint": "使用同机 Cloudflare Tunnel 时开启，以 CF-Connecting-IP 参与限流；直接开放端口时应关闭。"
+    "hint": "使用同机 Cloudflare Tunnel 且监听 127.0.0.1 时开启；直接开放端口时应关闭。监听 0.0.0.0 时还必须配置可信代理网段。"
+  },
+  "login_trusted_proxy_cidrs": {
+    "description": "额外可信反向代理网段",
+    "type": "list",
+    "default": [],
+    "hint": "同机 Tunnel 无需填写；跨主机代理时填写代理源 CIDR，例如 10.0.0.5/32。仅可信 TCP 对端可提供真实客户端 IP。"
   },
   "extra_command_roots": {
     "description": "额外命令入口",
@@ -80,8 +86,8 @@
   "login_link_ttl_minutes": {
     "description": "登录链接有效分钟数",
     "type": "int",
-    "default": 5,
-    "hint": "范围 1 到 30。"
+    "default": 3,
+    "hint": "范围 1 到 60。"
   },
   "confirm_ttl_minutes": {
     "description": "确认码有效分钟数",

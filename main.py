@@ -15,7 +15,7 @@ from .commands.event_adapter import mentioned_users, plain_text
 from .commands.parser import CommandParseError, CommandParser
 from .constants import PLUGIN_DISPLAY_NAME, PLUGIN_NAME, PLUGIN_VERSION
 from .domain.cards import CardMessage
-from .domain.login import LoginLinkMessage
+from .domain.login import LoginCompletionResult, LoginLinkMessage
 from .domain.player import PlayerDataError
 from .infrastructure.card_cache import remove_all_cards
 from .infrastructure.crypto import MasterKeyProvider, TokenCipher
@@ -36,7 +36,7 @@ from .services.settings import PluginSettings
 from .services.sync import GuideSyncService, SyncError
 from .web.dashboard import DashboardWebManager
 from .web.manager import WebManager
-from .web.public_login import PublicLoginServer
+from .web.public_login import PublicLoginServer, PublicLoginServerError
 
 _HANDLED_EVENT_KEY = "wuwa_global_server_tool_handled"
 
@@ -71,10 +71,12 @@ class WuWaGlobalServerPlugin(Star):
             self.database,
             self.http,
             lambda: self._initialized,
+        )
+        self.public_login = PublicLoginServer(
             self.settings,
             lambda: self.login_sessions,
+            self._on_login_complete,
         )
-        self.public_login = PublicLoginServer(self.settings, lambda: self.login_sessions)
         self.dashboard_web = DashboardWebManager(
             lambda: self.dashboard_service,
             lambda: self.backup_service,
@@ -212,7 +214,10 @@ class WuWaGlobalServerPlugin(Star):
             self._fetch_catalog,
             lambda: bool(self.sync_service is not None and self.sync_service.auto_sync_running),
         )
-        await self.public_login.start()
+        try:
+            await self.public_login.start()
+        except PublicLoginServerError as exc:
+            logger.error("%s：%s；缓存查询功能仍可使用", PLUGIN_DISPLAY_NAME, exc)
         if self.public_login.running:
             logger.info(
                 "%s：独立登录服务已监听 http://%s:%s",
@@ -329,11 +334,18 @@ class WuWaGlobalServerPlugin(Star):
         self.config.save_config()
 
     async def _apply_settings(self, settings: PluginSettings) -> None:
-        await self.public_login.update_settings(settings)
+        old_settings = self.settings
+        if self.login_sessions is not None:
+            self.login_sessions.settings = settings
+        try:
+            await self.public_login.update_settings(settings)
+        except Exception:
+            if self.login_sessions is not None:
+                self.login_sessions.settings = old_settings
+            raise
         await self.http.update_timeout(settings.request_timeout_seconds)
         self.settings = settings
         self.parser.update_settings(settings)
-        self.web.settings = settings
         if self.repository is not None:
             self.repository.confirm_ttl_minutes = settings.confirm_ttl_minutes
         if self.accounts is not None:
@@ -384,6 +396,68 @@ class WuWaGlobalServerPlugin(Star):
     @staticmethod
     async def _send(event: AstrMessageEvent, text: str) -> None:
         await event.send(MessageChain([Comp.Plain(text)]))
+
+    async def _on_login_complete(self, result: LoginCompletionResult) -> None:
+        accounts = "、".join(
+            f"{account.region_id}/{account.uid}"
+            + ("（默认）" if account == result.default_account else "")
+            for account in result.selected_accounts
+        )
+        try:
+            await self.context.send_message(
+                result.origin_context,
+                MessageChain(
+                    [
+                        Comp.Plain(
+                            "国际服账号绑定成功\n"
+                            f"账号：{result.email_masked}\n"
+                            f"游戏账号：{accounts}\n"
+                            "正在刷新默认账号的玩家与角色数据。"
+                        )
+                    ]
+                ),
+            )
+        except Exception:
+            logger.exception("%s：登录成功提示发送失败", PLUGIN_DISPLAY_NAME)
+        if self.sync_service is None or self.player_data is None:
+            try:
+                await self.context.send_message(
+                    result.origin_context,
+                    MessageChain([Comp.Plain("首次刷新未执行：数据服务尚未初始化。")]),
+                )
+            except Exception:
+                logger.exception("%s：登录刷新状态发送失败", PLUGIN_DISPLAY_NAME)
+            return
+        role_refresh, player_refresh = await asyncio.gather(
+            self.sync_service.sync(
+                result.qq_id,
+                result.default_account.uid,
+                result.default_account.region_id,
+            ),
+            self.player_data.query(
+                result.qq_id,
+                uid=result.default_account.uid,
+                region_id=result.default_account.region_id,
+            ),
+            return_exceptions=True,
+        )
+        if isinstance(role_refresh, Exception):
+            logger.warning("%s：登录后的角色刷新失败：%s", PLUGIN_DISPLAY_NAME, role_refresh)
+            role_text = "角色数据刷新失败"
+        else:
+            role_text = f"角色数据：{role_refresh.owned_count} 个角色"
+        if isinstance(player_refresh, Exception):
+            logger.warning("%s：登录后的玩家刷新失败：%s", PLUGIN_DISPLAY_NAME, player_refresh)
+            player_text = "玩家数据刷新失败"
+        else:
+            player_text = "玩家数据刷新成功"
+        try:
+            await self.context.send_message(
+                result.origin_context,
+                MessageChain([Comp.Plain(f"首次刷新完成\n{player_text}\n{role_text}")]),
+            )
+        except Exception:
+            logger.exception("%s：登录刷新结果发送失败", PLUGIN_DISPLAY_NAME)
 
     @staticmethod
     def _is_bot_message(event: AstrMessageEvent) -> bool:
