@@ -1,6 +1,7 @@
 """随插件发布的稳定角色目录及严格名称解析。"""
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +23,13 @@ class CharacterDefinition:
     @property
     def display_name(self) -> str:
         return self.names.get("zh-CN") or self.names.get("en") or self.character_id
+
+    @property
+    def is_rover(self) -> bool:
+        return any(
+            name.casefold().startswith("rover:") or name.startswith("漂泊者")
+            for name in self.names.values()
+        )
 
 
 class CharacterCatalog:
@@ -89,6 +97,30 @@ class CharacterCatalog:
         return cls(tuple(characters))
 
     def resolve(self, query: str) -> CharacterDefinition:
+        """查询用解析：精确优先，其次唯一前缀，再其次唯一包含。"""
+        try:
+            return self.resolve_exact(query)
+        except CatalogError as exact_error:
+            normalized = query.strip().casefold()
+            if not normalized:
+                raise
+            prefix = self._unique_candidates(
+                item
+                for item in self.characters
+                if any(name.casefold().startswith(normalized) for name in item.names.values())
+            )
+            if prefix:
+                return prefix
+            contains = self._unique_candidates(
+                item
+                for item in self.characters
+                if any(normalized in name.casefold() for name in item.names.values())
+            )
+            if contains:
+                return contains
+            raise exact_error
+
+    def resolve_exact(self, query: str) -> CharacterDefinition:
         normalized = query.strip()
         if not normalized:
             raise CatalogError("角色不能为空")
@@ -102,6 +134,18 @@ class CharacterCatalog:
             candidates = "、".join(item.display_name for item in matches)
             raise CatalogError(f"角色名称存在歧义：{candidates}")
         return matches[0]
+
+    @staticmethod
+    def _unique_candidates(
+        candidates: Iterable[CharacterDefinition],
+    ) -> CharacterDefinition | None:
+        unique = {item.character_id: item for item in candidates}
+        if not unique:
+            return None
+        if len(unique) > 1:
+            names = "、".join(item.display_name for item in unique.values())
+            raise CatalogError(f"角色名称存在歧义：{names}")
+        return next(iter(unique.values()))
 
     def get(self, character_id: str | int | None) -> CharacterDefinition | None:
         if character_id is None:

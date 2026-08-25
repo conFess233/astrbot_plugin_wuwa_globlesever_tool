@@ -29,6 +29,14 @@ class PlayerSnapshot:
     liveness_max: int | None
     liveness_unlock: bool | None
     weekly_inst_count: int | None
+    battle_pass_present: bool
+    battle_pass_level: int | None
+    battle_pass_week_exp: int | None
+    battle_pass_week_max_exp: int | None
+    battle_pass_is_unlock: bool | None
+    battle_pass_is_open: bool | None
+    battle_pass_exp: int | None
+    battle_pass_exp_limit: int | None
     sound_box: int | None
     boxes: tuple[tuple[str, int], ...] | None
     basic_boxes: tuple[tuple[str, int], ...] | None

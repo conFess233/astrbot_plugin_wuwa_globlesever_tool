@@ -1,4 +1,6 @@
-"""命令应用服务：校验权限、操作本地档案并生成文本结果。"""
+"""命令应用服务：校验权限、协调刷新并生成展示结果。"""
+
+from dataclasses import replace
 
 from ..commands.parser import CommandName, ParsedCommand
 from ..domain.cards import CardMessage
@@ -16,12 +18,6 @@ from .sync import GuideSyncService
 
 class CommandServiceError(ValueError):
     """表示命令语义或权限不满足。"""
-
-
-_LANGUAGES = {"zh-CN", "zh-TW", "en", "ja", "ko"}
-_NOT_IMPLEMENTED = {
-    CommandName.LOCAL_MERGE: "本地档案合并当前版本尚未实现。",
-}
 
 
 class CommandService:
@@ -51,21 +47,28 @@ class CommandService:
         command: ParsedCommand,
         *,
         origin_context: str = "",
+        is_admin: bool = False,
     ) -> str | LoginLinkMessage | CardMessage:
+        if command.target_qq == actor_qq:
+            command = replace(command, target_qq=None)
         target_qq = command.target_qq or actor_qq
         if command.target_qq and not self.settings.allow_query_others:
             raise CommandServiceError("管理员未开启查询他人数据功能")
 
+        if self.accounts is not None:
+            await self.accounts.touch_origin(actor_qq, origin_context)
+
         if command.name == CommandName.HELP:
             return self._help()
-        if command.name in _NOT_IMPLEMENTED:
-            return _NOT_IMPLEMENTED[command.name]
         if command.name == CommandName.LOGIN:
             if self.login_sessions is None:
                 raise CommandServiceError("网页登录服务尚未初始化")
             return await self.login_sessions.create_link(actor_qq, origin_context)
-        if command.name == CommandName.LOGIN_CONFIRM:
-            return "网页登录选择账号后会直接完成绑定，无需再发送 QQ 登录确认码。"
+        if command.name == CommandName.CANCEL_LOGIN:
+            if self.login_sessions is None:
+                raise CommandServiceError("网页登录服务尚未初始化")
+            cancelled = await self.login_sessions.cancel(actor_qq)
+            return "登录链接已作废" if cancelled else "当前没有可取消的登录链接"
         if command.name == CommandName.ACCOUNT:
             if self.accounts is None:
                 profile = await self.repository.active_profile(actor_qq)
@@ -82,20 +85,31 @@ class CommandService:
         if command.name == CommandName.UNBIND:
             if self.accounts is None:
                 raise CommandServiceError("账号服务尚未初始化")
-            pending = await self.accounts.begin_unbind(actor_qq, command.arguments[0])
-            return self._confirmation_text(f"解绑 UID {pending.uid}", pending.code)
-        if command.name == CommandName.SYNC:
+            pending = await self.accounts.begin_unbind(
+                actor_qq, command.arguments[0], origin_context
+            )
+            return self._confirmation_text(f"解绑 {pending.region_id} 区服 UID {pending.uid}")
+        if command.name == CommandName.REFRESH:
             if self.sync_service is None:
                 raise CommandServiceError("攻略站同步服务尚未初始化")
             uid = command.arguments[0] if command.arguments else None
-            result = await self.sync_service.sync(actor_qq, uid)
+            result = await self.sync_service.sync(actor_qq, uid, force=is_admin)
             account_note = ""
             if self.player_data is not None:
                 try:
-                    await self.player_data.query(actor_qq, uid=result.uid)
+                    snapshot = await self.player_data.refresh(
+                        actor_qq,
+                        uid=result.uid,
+                        region_id=result.region_id,
+                    )
+                    if snapshot.is_cached_fallback:
+                        account_note = "\n账号详情刷新失败，已保留本地缓存。"
                 except PlayerDataError as exc:
                     account_note = f"\n账号详情刷新失败：{exc}"
-            return f"UID {result.uid} 同步成功，共获取 {result.owned_count} 个角色。{account_note}"
+            return (
+                f"{result.region_id} 区服 UID {result.uid} 刷新成功，"
+                f"共获取 {result.owned_count} 个角色。{account_note}"
+            )
         if command.name == CommandName.CHARACTER_LIST:
             return await self._character_list(target_qq, command)
         if command.name == CommandName.CHARACTER_DETAIL:
@@ -109,24 +123,17 @@ class CommandService:
         if command.name == CommandName.MODIFY:
             return await self._modify(actor_qq, command)
         if command.name == CommandName.RESET:
-            return await self._reset(actor_qq, command)
+            return await self._reset(actor_qq, command, origin_context)
         if command.name == CommandName.CHARACTER_DELETE:
-            return await self._begin_delete(actor_qq, command)
-        if command.name == CommandName.CLEAR_DATA:
-            pending = await self.repository.begin_clear_data(actor_qq)
-            return self._confirmation_text("清除你的全部插件数据", pending.code)
+            return await self._begin_delete(actor_qq, command, origin_context)
         if command.name == CommandName.CONFIRM:
             if self.accounts is not None:
-                result = await self.accounts.confirm_unbind(actor_qq, command.arguments[0])
+                result = await self.accounts.confirm_unbind(actor_qq, origin_context)
                 if result is not None:
                     return result
-            return await self.repository.confirm(actor_qq, command.arguments[0])
-        if command.name == CommandName.LANGUAGE:
-            language = command.arguments[0]
-            if language not in _LANGUAGES:
-                raise CommandServiceError("语言仅支持 zh-CN、zh-TW、en、ja、ko")
-            await self.repository.set_language(actor_qq, language)
-            return f"语言已设置为 {language}。首版命令文本暂以简体中文显示。"
+            return await self.repository.confirm(actor_qq, origin_context)
+        if command.name == CommandName.CANCEL:
+            return await self.repository.cancel(actor_qq, origin_context)
         raise CommandServiceError("该命令尚未接入")
 
     async def _account(self, qq_id: str) -> str:
@@ -135,7 +142,11 @@ class CommandService:
             "本地"
             if overview.active_is_local
             else next(
-                (account.uid for account in overview.accounts if account.is_active),
+                (
+                    f"{account.region_name} · UID {account.uid}"
+                    for account in overview.accounts
+                    if account.is_active
+                ),
                 "---",
             )
         )
@@ -146,7 +157,7 @@ class CommandService:
             lines.append("尚未绑定国际服 UID。")
             return "\n".join(lines)
         lines.append("已绑定 UID：")
-        for account in overview.accounts:
+        for index, account in enumerate(overview.accounts, start=1):
             marks = []
             if account.is_default:
                 marks.append("默认")
@@ -155,7 +166,8 @@ class CommandService:
             suffix = f" [{' / '.join(marks)}]" if marks else ""
             name = f" {account.player_name}" if account.player_name else ""
             lines.append(
-                f"- {account.uid}{name} · {account.region_name} · {account.sync_status}{suffix}"
+                f"{index}. {account.region_name} · UID {account.uid}{name} · "
+                f"{account.sync_status}{suffix}"
             )
         return "\n".join(lines)
 
@@ -163,6 +175,12 @@ class CommandService:
         profile = await self.repository.active_profile(
             qq_id, external_query=command.target_qq is not None
         )
+        if (
+            command.target_qq
+            and profile.profile_type == "uid"
+            and not await self.repository.role_snapshot_updated_at(profile.profile_id)
+        ):
+            raise CommandServiceError("该用户尚无角色数据缓存，请让对方先执行 /kh 刷新")
         records = await self.repository.list_characters(profile.profile_id)
         player = None
         if profile.uid and self.player_data is not None:
@@ -186,6 +204,12 @@ class CommandService:
         profile = await self.repository.active_profile(
             qq_id, external_query=command.target_qq is not None
         )
+        if (
+            command.target_qq
+            and profile.profile_type == "uid"
+            and not await self.repository.role_snapshot_updated_at(profile.profile_id)
+        ):
+            raise CommandServiceError("该用户尚无角色数据缓存，请让对方先执行 /kh 刷新")
         record = await self.repository.get_character(profile.profile_id, character.character_id)
         if record is None:
             raise CommandServiceError(f"{profile.label}档案中没有 {character.display_name} 的记录")
@@ -202,46 +226,72 @@ class CommandService:
             raise CommandServiceError("玩家详情服务尚未初始化")
         snapshot = await self.player_data.query(qq_id, external_query=command.target_qq is not None)
         if kind == "account_info":
-            return await self.cards.account_info(snapshot)
-        if kind == "daily":
-            return await self.cards.daily(snapshot)
-        return await self.cards.exploration(snapshot)
+            result = await self.cards.account_info(snapshot)
+        elif kind == "daily":
+            result = await self.cards.daily(snapshot)
+        else:
+            result = await self.cards.exploration(snapshot)
+        if snapshot.is_cached_fallback:
+            if isinstance(result, CardMessage):
+                return replace(result, notice="刷新失败，已展示缓存")
+            return f"{result}\n刷新失败，已展示缓存"
+        return result
 
     async def _modify(self, qq_id: str, command: ParsedCommand) -> str:
         character_query, field, raw_value = command.arguments
-        character = self.catalog.resolve(character_query)
-        if field in {"武器", "武器等级", "武器精炼"}:
-            raise CommandServiceError("武器静态目录尚未完成验证，本阶段暂不接受武器修改")
-        value = (
-            self._bounded_integer(raw_value, 1, 90)
-            if field == "等级"
-            else self._bounded_integer(raw_value, 0, 6)
-        )
+        character = self.catalog.resolve_exact(character_query)
+        profile = await self.repository.active_profile(qq_id)
+        existing = await self.repository.get_character(profile.profile_id, character.character_id)
+        if character.is_rover and (
+            existing is None or existing.record_origin not in {"api", "mixed"}
+        ):
+            raise CommandServiceError("只能修改接口实际返回的漂泊者形态")
+        if field == "武器" and existing is not None and existing.weapon_source == "api":
+            raise CommandServiceError("接口已返回该角色的武器，不能用本地武器覆盖")
+        if field in {"武器等级", "武器精炼"} and (existing is None or existing.weapon_id is None):
+            raise CommandServiceError("请先为该角色设置武器")
+        if field in {"等级", "武器等级"}:
+            value: int | str = self._bounded_integer(raw_value, 1, 90)
+        elif field == "共鸣链":
+            value = self._bounded_integer(raw_value, 0, 6)
+        elif field == "武器精炼":
+            value = self._bounded_integer(raw_value, 1, 5)
+        else:
+            value = raw_value.strip()
+            if not value or len(value) > 80:
+                raise CommandServiceError("武器名称必须为 1-80 个字符")
         record = await self.repository.set_manual_field(qq_id, character, field, value)
         return (
             f"已将 {record.character_name} 的{field}修改为 {value}。\n"
             f"{self._detail_text('活动', record)}"
         )
 
-    async def _reset(self, qq_id: str, command: ParsedCommand) -> str:
-        character = self.catalog.resolve(command.arguments[0])
+    async def _reset(self, qq_id: str, command: ParsedCommand, origin_context: str) -> str:
+        character = self.catalog.resolve_exact(command.arguments[0])
         field = command.arguments[1]
+        if field == "全部":
+            pending = await self.repository.begin_reset_all(
+                qq_id,
+                character.character_id,
+                character.display_name,
+                origin_context,
+            )
+            return self._confirmation_text(pending.summary)
         record = await self.repository.reset_manual_fields(qq_id, character.character_id, field)
         if record is None:
             return f"已重置 {character.display_name} 的{field}；该纯手动空记录已移除。"
         return f"已重置 {character.display_name} 的{field}。\n{self._detail_text('活动', record)}"
 
-    async def _begin_delete(self, qq_id: str, command: ParsedCommand) -> str:
-        character = self.catalog.resolve(command.arguments[0])
-        pending = await self.repository.begin_character_delete(qq_id, character.character_id)
-        return self._confirmation_text(f"删除 {character.display_name} 的当前记录", pending.code)
-
-    def _confirmation_text(self, operation: str, code: str) -> str:
-        return (
-            f"危险操作：{operation}\n"
-            f"确认码：{code}\n"
-            f"请在 {self.settings.confirm_ttl_minutes} 分钟内发送 /kh 确认 {code}。"
+    async def _begin_delete(self, qq_id: str, command: ParsedCommand, origin_context: str) -> str:
+        character = self.catalog.resolve_exact(command.arguments[0])
+        pending = await self.repository.begin_character_delete(
+            qq_id, character.character_id, origin_context
         )
+        return self._confirmation_text(pending.summary)
+
+    @staticmethod
+    def _confirmation_text(operation: str) -> str:
+        return f"危险操作：{operation}\n请在 60 秒内于当前会话发送 /kh 确认；发送 /kh 取消可撤销。"
 
     @staticmethod
     def _detail_text(profile_label: str, record: CharacterRecord) -> str:
@@ -249,22 +299,14 @@ class CommandService:
             f"{record.character_name}（{profile_label}档案）\n"
             f"等级：{CommandService._value(record.level)}\n"
             f"共鸣链：{CommandService._value(record.chain)}\n"
-            f"武器：{record.weapon_id or '---'}\n"
+            f"武器：{record.weapon_name or '---'}\n"
             f"武器等级：{CommandService._value(record.weapon_level)}\n"
-            f"武器精炼：{CommandService._value(record.weapon_refinement)}\n"
-            f"评分：{CommandService._score(record)}"
+            f"武器精炼：{CommandService._value(record.weapon_refinement)}"
         )
 
     @staticmethod
     def _value(value: object | None) -> str:
         return "---" if value is None else str(value)
-
-    @staticmethod
-    def _score(record: CharacterRecord) -> str:
-        if record.score_total is None:
-            return "---"
-        grade = f" {record.score_grade}" if record.score_grade else ""
-        return f"{record.score_total:g}{grade}"
 
     @staticmethod
     def _bounded_integer(raw: str, minimum: int, maximum: int) -> int:
@@ -287,12 +329,14 @@ class CommandService:
             "/kh 探索 [@用户]\n"
             "/kh 修改 <角色> 等级 <1-90>\n"
             "/kh 修改 <角色> 共鸣链 <0-6>\n"
+            "/kh 修改 <角色> 武器 <名称>\n"
+            "/kh 修改 <角色> 武器等级 <1-90>\n"
+            "/kh 修改 <角色> 武器精炼 <1-5>\n"
             "/kh 重置 <角色> <等级|共鸣链|武器|武器等级|武器精炼|全部>\n"
-            "/kh 角色删除 <角色>\n"
-            "/kh 登录 | /kh 登录确认 <6位确认码>\n"
+            "/kh 删除角色 <角色>\n"
+            "/kh 登录 | /kh 取消登录\n"
             "/kh 账号 | /kh 切换 <UID|本地> | /kh 解绑 <UID>\n"
-            "/kh 同步 [UID]\n"
-            "/kh 清除数据 | /kh 确认 <确认码>\n"
-            "/kh 语言 <zh-CN|zh-TW|en|ja|ko>\n"
+            "/kh 刷新 [UID] | /kh 同步 [UID]\n"
+            "/kh 确认 | /kh 取消\n"
             "兼容关键词：kh角色、kh角色 <角色>、kh账号信息、kh日常、kh探索。"
         )

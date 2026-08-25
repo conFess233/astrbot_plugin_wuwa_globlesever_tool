@@ -7,7 +7,7 @@ from enum import StrEnum
 from ..services.settings import PluginSettings
 
 _SPACE = re.compile(r"\s+")
-_PAGE = re.compile(r"^\d+页?$")
+_PAGE = re.compile(r"^(?:\d+|x)页?$", re.IGNORECASE)
 _MODIFY = re.compile(r"^修改\s+(.+?)\s+(武器等级|武器精炼|共鸣链|等级|武器)\s+(.+)$")
 _RESET = re.compile(r"^重置\s+(.+?)\s+(武器等级|武器精炼|共鸣链|等级|武器|全部)$")
 
@@ -15,10 +15,10 @@ _RESET = re.compile(r"^重置\s+(.+?)\s+(武器等级|武器精炼|共鸣链|等
 class CommandName(StrEnum):
     HELP = "help"
     LOGIN = "login"
-    LOGIN_CONFIRM = "login_confirm"
+    CANCEL_LOGIN = "cancel_login"
     ACCOUNT = "account"
     SWITCH = "switch"
-    SYNC = "sync"
+    REFRESH = "refresh"
     UNBIND = "unbind"
     CHARACTER_LIST = "character_list"
     CHARACTER_DETAIL = "character_detail"
@@ -28,10 +28,8 @@ class CommandName(StrEnum):
     MODIFY = "modify"
     RESET = "reset"
     CHARACTER_DELETE = "character_delete"
-    LOCAL_MERGE = "local_merge"
-    CLEAR_DATA = "clear_data"
     CONFIRM = "confirm"
-    LANGUAGE = "language"
+    CANCEL = "cancel"
 
 
 READ_ONLY_COMMANDS = {
@@ -61,6 +59,29 @@ class CommandParser:
     def update_settings(self, settings: PluginSettings) -> None:
         self.settings = settings
         self.roots = ("/kh", *settings.extra_command_roots)
+        groups = (
+            (settings.keyword_help, CommandName.HELP, False),
+            (settings.keyword_cancel_login, CommandName.CANCEL_LOGIN, False),
+            (settings.keyword_login, CommandName.LOGIN, False),
+            (settings.keyword_account_info, CommandName.ACCOUNT_INFO, False),
+            (settings.keyword_account, CommandName.ACCOUNT, False),
+            (settings.keyword_switch, CommandName.SWITCH, True),
+            (settings.keyword_character, CommandName.CHARACTER_LIST, True),
+            (settings.keyword_daily, CommandName.DAILY, False),
+            (settings.keyword_exploration, CommandName.EXPLORATION, False),
+            (settings.keyword_refresh, CommandName.REFRESH, True),
+        )
+        self.keyword_registry = tuple(
+            sorted(
+                (
+                    (keyword, name, accepts_argument)
+                    for keywords, name, accepts_argument in groups
+                    for keyword in keywords
+                ),
+                key=lambda item: len(item[0]),
+                reverse=True,
+            )
+        )
 
     def parse(self, plain_text: str, mentioned_users: list[str]) -> ParsedCommand | None:
         text = _SPACE.sub(" ", plain_text.strip())
@@ -91,7 +112,18 @@ class CommandParser:
                 return text[len(prefix) :].strip()
             if text[: len(root)].casefold() == root.casefold():
                 compact_tail = text[len(root) :].strip()
-                if compact_tail in {"账号", "账号信息", "角色", "日常", "探索", "登录", "帮助"}:
+                if compact_tail in {
+                    "账号",
+                    "账号信息",
+                    "角色",
+                    "日常",
+                    "探索",
+                    "登录",
+                    "取消登录",
+                    "刷新",
+                    "同步",
+                    "帮助",
+                }:
                     return compact_tail
         return None
 
@@ -100,18 +132,20 @@ class CommandParser:
             return ParsedCommand(CommandName.HELP)
         if tail == "登录":
             return ParsedCommand(CommandName.LOGIN)
-        if tail.startswith("登录确认 "):
-            return self._one_argument(CommandName.LOGIN_CONFIRM, tail, "登录确认")
+        if tail == "取消登录":
+            return ParsedCommand(CommandName.CANCEL_LOGIN)
         if tail == "账号":
             return ParsedCommand(CommandName.ACCOUNT)
         if tail == "账号信息":
             return ParsedCommand(CommandName.ACCOUNT_INFO)
         if tail.startswith("切换 "):
             return self._one_argument(CommandName.SWITCH, tail, "切换")
-        if tail == "同步":
-            return ParsedCommand(CommandName.SYNC)
+        if tail in {"刷新", "同步"}:
+            return ParsedCommand(CommandName.REFRESH)
+        if tail.startswith("刷新 "):
+            return self._one_argument(CommandName.REFRESH, tail, "刷新")
         if tail.startswith("同步 "):
-            return self._one_argument(CommandName.SYNC, tail, "同步")
+            return self._one_argument(CommandName.REFRESH, tail, "同步")
         if tail.startswith("解绑 "):
             return self._one_argument(CommandName.UNBIND, tail, "解绑")
         if tail == "角色":
@@ -122,6 +156,8 @@ class CommandParser:
             return ParsedCommand(CommandName.DAILY)
         if tail == "探索":
             return ParsedCommand(CommandName.EXPLORATION)
+        if tail in {"练度", "面板"}:
+            raise CommandParseError("该命令已移除，请使用 /kh 角色")
 
         match = _MODIFY.fullmatch(tail)
         if match:
@@ -129,42 +165,37 @@ class CommandParser:
         match = _RESET.fullmatch(tail)
         if match:
             return ParsedCommand(CommandName.RESET, tuple(part.strip() for part in match.groups()))
-        if tail.startswith("角色删除 "):
-            return self._one_argument(CommandName.CHARACTER_DELETE, tail, "角色删除")
-        if tail.startswith("本地合并 "):
-            return self._one_argument(CommandName.LOCAL_MERGE, tail, "本地合并")
-        if tail == "清除数据":
-            return ParsedCommand(CommandName.CLEAR_DATA)
-        if tail.startswith("确认 "):
-            return self._one_argument(CommandName.CONFIRM, tail, "确认")
-        if tail.startswith("语言 "):
-            return self._one_argument(CommandName.LANGUAGE, tail, "语言")
+        if tail.startswith("删除角色 "):
+            return self._one_argument(CommandName.CHARACTER_DELETE, tail, "删除角色")
+        if tail == "确认":
+            return ParsedCommand(CommandName.CONFIRM)
+        if tail == "取消":
+            return ParsedCommand(CommandName.CANCEL)
         raise CommandParseError("命令格式不正确，请使用 /kh 帮助 查看用法")
 
     def _parse_keyword(self, text: str) -> ParsedCommand | None:
-        exact_groups = (
-            (self.settings.keyword_help, CommandName.HELP),
-            (self.settings.keyword_login, CommandName.LOGIN),
-            (self.settings.keyword_account, CommandName.ACCOUNT),
-            (self.settings.keyword_account_info, CommandName.ACCOUNT_INFO),
-            (self.settings.keyword_daily, CommandName.DAILY),
-            (self.settings.keyword_exploration, CommandName.EXPLORATION),
-        )
-        for keywords, name in exact_groups:
-            if any(text.casefold() == keyword.casefold() for keyword in keywords):
+        if text.casefold() in {"kh练度", "鸣潮练度", "kh面板", "鸣潮面板"}:
+            raise CommandParseError("该命令已移除，请使用 /kh 角色")
+        for keyword, name, accepts_argument in self.keyword_registry:
+            folded = keyword.casefold()
+            if text.casefold() == folded:
+                if name == CommandName.SWITCH:
+                    raise CommandParseError("切换参数不能为空")
                 return ParsedCommand(name, trigger="keyword")
-
-        for keyword in sorted(self.settings.keyword_character, key=len, reverse=True):
-            if text.casefold() == keyword.casefold():
-                return ParsedCommand(CommandName.CHARACTER_LIST, trigger="keyword")
-            if text[: len(keyword)].casefold() != keyword.casefold():
+            if text[: len(keyword)].casefold() != folded:
                 continue
             remainder = text[len(keyword) :]
-            if remainder.startswith(" "):
-                result = self._character_tail(remainder.strip())
-                return ParsedCommand(result.name, result.arguments, trigger="keyword")
-            if _PAGE.fullmatch(remainder):
+            if name == CommandName.CHARACTER_LIST and _PAGE.fullmatch(remainder):
                 raise CommandParseError("角色列表已取消分页，请直接使用 /kh 角色")
+            if not accepts_argument or not remainder.startswith(" "):
+                continue
+            argument = remainder.strip()
+            if not argument:
+                raise CommandParseError(f"{keyword} 参数不能为空")
+            if name == CommandName.CHARACTER_LIST:
+                result = self._character_tail(argument)
+                return ParsedCommand(result.name, result.arguments, trigger="keyword")
+            return ParsedCommand(name, (argument,), trigger="keyword")
         return None
 
     def _character_tail(self, value: str) -> ParsedCommand:

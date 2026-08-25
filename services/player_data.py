@@ -1,18 +1,23 @@
 """从国际服启动器接口刷新并持久化唯一玩家详情快照。"""
 
 import asyncio
+import hashlib
 import json
+import random
 import sqlite3
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from pathlib import Path
 
 import aiohttp
 
+from ..application.refresh import SingleFlightCoordinator
 from ..domain.models import RegionUid
 from ..domain.player import PlayerDataError, PlayerSnapshot
 from ..infrastructure.crypto import CryptoError, TokenCipher
 from ..infrastructure.database import Database
 from ..infrastructure.http import HttpClient
+from .settings import PluginSettings
 
 _PLAYER_INFO_URL = "https://pc-launcher-sdk-api.kurogame.net/game/queryPlayerInfo"
 _ROLE_URL = "https://pc-launcher-sdk-api.kurogame.net/game/queryRole"
@@ -30,12 +35,20 @@ class _Context:
 
 
 class PlayerDataService:
-    def __init__(self, database: Database, cipher: TokenCipher, http: HttpClient):
+    def __init__(
+        self,
+        database: Database,
+        cipher: TokenCipher,
+        http: HttpClient,
+        settings: PluginSettings,
+        raw_snapshot_directory: Path | None = None,
+    ):
         self.database = database
         self.cipher = cipher
         self.http = http
-        self._guard = asyncio.Lock()
-        self._flights: dict[str, asyncio.Task[PlayerSnapshot]] = {}
+        self.settings = settings
+        self.raw_snapshot_directory = raw_snapshot_directory
+        self._singleflight = SingleFlightCoordinator[PlayerSnapshot]()
 
     async def query(
         self,
@@ -51,14 +64,41 @@ class PlayerDataService:
             uid=uid,
             region_id=region_id,
         )
+        cached = await self._cached_context(context)
+        if external_query:
+            if cached is None:
+                raise PlayerDataError("该用户尚无玩家数据缓存，请让对方先自行查询一次")
+            return cached
+        if cached is not None and not self.settings.query_refresh_enabled:
+            return cached
+        if cached is not None and self._inside_cooldown(cached.refreshed_at):
+            return cached
+        return await self._refresh_with_fallback(context, cached)
+
+    async def refresh(
+        self,
+        qq_id: str,
+        *,
+        uid: str | None = None,
+        region_id: str | None = None,
+    ) -> PlayerSnapshot:
+        context = await self._context(
+            qq_id,
+            external_query=False,
+            uid=uid,
+            region_id=region_id,
+        )
+        cached = await self._cached_context(context)
+        return await self._refresh_with_fallback(context, cached)
+
+    async def _refresh_with_fallback(
+        self,
+        context: _Context,
+        cached: PlayerSnapshot | None,
+    ) -> PlayerSnapshot:
         flight_key = RegionUid(context.region_id, context.uid).cache_key
-        async with self._guard:
-            task = self._flights.get(flight_key)
-            if task is None or task.done():
-                task = asyncio.create_task(self._refresh(context))
-                self._flights[flight_key] = task
         try:
-            return await asyncio.shield(task)
+            return await self._singleflight.run(flight_key, lambda: self._refresh(context))
         except (
             aiohttp.ClientError,
             asyncio.TimeoutError,
@@ -69,20 +109,9 @@ class PlayerDataService:
             PlayerDataError,
             json.JSONDecodeError,
         ) as exc:
-            cached = await self.cached(
-                qq_id,
-                external_query=external_query,
-                uid=context.uid,
-                region_id=context.region_id,
-            )
             if cached is not None:
                 return replace(cached, is_cached_fallback=True)
             raise PlayerDataError("玩家详情刷新失败，且本地没有可用缓存，请重新登录后重试") from exc
-        finally:
-            if task.done():
-                async with self._guard:
-                    if self._flights.get(flight_key) is task:
-                        self._flights.pop(flight_key, None)
 
     async def cached(
         self,
@@ -98,6 +127,9 @@ class PlayerDataService:
             uid=uid,
             region_id=region_id,
         )
+        return await self._cached_context(context)
+
+    async def _cached_context(self, context: _Context) -> PlayerSnapshot | None:
         return await self.database.read(
             lambda db: self._snapshot_from_row(
                 db.execute(
@@ -115,24 +147,39 @@ class PlayerDataService:
         if not oauth_code:
             raise PlayerDataError("账号授权信息缺失，请重新执行 /kh 登录")
 
-        player_response = await self.http.post_json(
-            _PLAYER_INFO_URL,
-            {"oauthCode": oauth_code},
-            allowed_hosts=_ALLOWED_HOSTS,
-            max_bytes=_MAX_RESPONSE_BYTES,
-        )
-        region_id, player = self._select_player(
-            player_response,
-            context.uid,
-            context.region_id,
-        )
-        role_response = await self.http.post_json(
-            _ROLE_URL,
-            {"oauthCode": oauth_code, "playerId": int(context.uid), "region": region_id},
-            allowed_hosts=_ALLOWED_HOSTS,
-            max_bytes=_MAX_RESPONSE_BYTES,
-        )
-        base = self._select_role_base(role_response, region_id)
+        await self._mark_refresh(context, "attempt")
+        try:
+            async with asyncio.timeout(self.settings.player_refresh_timeout_seconds):
+                player_response = await self._retry_post(
+                    _PLAYER_INFO_URL,
+                    {"oauthCode": oauth_code},
+                )
+                region_id, player = self._select_player(
+                    player_response,
+                    context.uid,
+                    context.region_id,
+                )
+                role_response = await self._retry_post(
+                    _ROLE_URL,
+                    {
+                        "oauthCode": oauth_code,
+                        "playerId": int(context.uid),
+                        "region": region_id,
+                    },
+                )
+        except Exception:
+            await self._mark_refresh(context, "failure")
+            raise
+        try:
+            detail = self._select_role_detail(role_response, region_id)
+            base = detail.get("Base")
+            if not isinstance(base, dict):
+                raise ValueError("玩家详情响应缺少 Base")
+            battle_pass = detail.get("BattlePass")
+            battle_pass = battle_pass if isinstance(battle_pass, dict) else None
+        except Exception:
+            await self._mark_refresh(context, "failure")
+            raise
         refreshed_at = datetime.now(UTC).isoformat()
         values = {
             "player_name": self._text(player.get("roleName")) or self._text(base.get("Name")),
@@ -152,6 +199,24 @@ class PlayerDataService:
             "liveness_max": self._integer(base.get("LivenessMaxCount")),
             "liveness_unlock": self._boolean(base.get("LivenessUnlock")),
             "weekly_inst_count": self._integer(base.get("WeeklyInstCount")),
+            "battle_pass_present": int(battle_pass is not None),
+            "battle_pass_level": self._integer(battle_pass.get("Level")) if battle_pass else None,
+            "battle_pass_week_exp": self._integer(battle_pass.get("WeekExp"))
+            if battle_pass
+            else None,
+            "battle_pass_week_max_exp": self._integer(battle_pass.get("WeekMaxExp"))
+            if battle_pass
+            else None,
+            "battle_pass_is_unlock": self._boolean_integer(battle_pass.get("IsUnlock"))
+            if battle_pass
+            else None,
+            "battle_pass_is_open": self._boolean_integer(battle_pass.get("IsOpen"))
+            if battle_pass
+            else None,
+            "battle_pass_exp": self._integer(battle_pass.get("Exp")) if battle_pass else None,
+            "battle_pass_exp_limit": self._integer(battle_pass.get("ExpLimit"))
+            if battle_pass
+            else None,
             "sound_box": self._integer(base.get("SoundBox")),
             "boxes_json": self._collection_json(base.get("Boxes")),
             "basic_boxes_json": self._collection_json(base.get("BasicBoxes")),
@@ -195,7 +260,112 @@ class PlayerDataService:
                 raise PlayerDataError("玩家详情快照写入失败")
             return snapshot
 
-        return await self.database.write(operation)
+        snapshot = await self.database.write(operation)
+        await self._mark_refresh(context, "success")
+        if self.raw_snapshot_directory is not None:
+            await asyncio.to_thread(
+                self._write_raw_snapshot,
+                context,
+                player_response,
+                role_response,
+            )
+        return snapshot
+
+    async def _retry_post(self, url: str, body: dict[str, object]) -> object:
+        attempts = self.settings.request_retry_count + 1
+        for attempt in range(attempts):
+            try:
+                return await self.http.post_json(
+                    url,
+                    body,
+                    allowed_hosts=_ALLOWED_HOSTS,
+                    max_bytes=_MAX_RESPONSE_BYTES,
+                )
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError, RuntimeError, ValueError):
+                if attempt + 1 >= attempts:
+                    raise
+                await asyncio.sleep((0.35 * (2**attempt)) + random.uniform(0, 0.15))
+        raise AssertionError("unreachable")
+
+    async def _mark_refresh(self, context: _Context, state: str) -> None:
+        now = datetime.now(UTC).isoformat()
+
+        def operation(db: sqlite3.Connection) -> None:
+            db.execute(
+                "INSERT INTO refresh_states (refresh_kind, region_id, uid, updated_at) "
+                "VALUES ('player', ?, ?, ?) ON CONFLICT(refresh_kind, region_id, uid) "
+                "DO UPDATE SET updated_at = excluded.updated_at",
+                (context.region_id, context.uid, now),
+            )
+            if state == "attempt":
+                db.execute(
+                    "UPDATE refresh_states SET last_attempt_at = ?, updated_at = ? "
+                    "WHERE refresh_kind = 'player' AND region_id = ? AND uid = ?",
+                    (now, now, context.region_id, context.uid),
+                )
+            elif state == "success":
+                db.execute(
+                    "UPDATE refresh_states SET last_success_at = ?, failure_count = 0, "
+                    "backoff_until = NULL, last_error_category = NULL, updated_at = ? "
+                    "WHERE refresh_kind = 'player' AND region_id = ? AND uid = ?",
+                    (now, now, context.region_id, context.uid),
+                )
+            else:
+                db.execute(
+                    "UPDATE refresh_states SET failure_count = failure_count + 1, "
+                    "last_error_category = 'upstream', updated_at = ? "
+                    "WHERE refresh_kind = 'player' AND region_id = ? AND uid = ?",
+                    (now, context.region_id, context.uid),
+                )
+
+        await self.database.write(operation)
+
+    def _inside_cooldown(self, refreshed_at: str) -> bool:
+        try:
+            refreshed = datetime.fromisoformat(refreshed_at)
+        except ValueError:
+            return False
+        if refreshed.tzinfo is None:
+            refreshed = refreshed.replace(tzinfo=UTC)
+        age = (datetime.now(UTC) - refreshed.astimezone(UTC)).total_seconds()
+        return age < self.settings.player_refresh_cooldown_seconds
+
+    def _write_raw_snapshot(
+        self,
+        context: _Context,
+        player_response: object,
+        role_response: object,
+    ) -> None:
+        if self.raw_snapshot_directory is None:
+            return
+        self.raw_snapshot_directory.mkdir(parents=True, exist_ok=True)
+        key = hashlib.sha256(f"{context.region_id}\0{context.uid}\0player".encode()).hexdigest()
+        target = self.raw_snapshot_directory / f"{key}.json.enc"
+        temporary = target.with_suffix(".tmp")
+        payload = {
+            "region_id": context.region_id,
+            "uid": context.uid,
+            "player": self._redact(player_response),
+            "role": self._redact(role_response),
+        }
+        encrypted = self.cipher.encrypt_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        )
+        temporary.write_text(encrypted, encoding="utf-8")
+        temporary.replace(target)
+
+    @classmethod
+    def _redact(cls, value: object) -> object:
+        blocked = {"email", "token", "oauth", "cookie", "authorization", "device"}
+        if isinstance(value, dict):
+            return {
+                str(key): cls._redact(item)
+                for key, item in value.items()
+                if not any(word in str(key).casefold() for word in blocked)
+            }
+        if isinstance(value, list):
+            return [cls._redact(item) for item in value]
+        return value
 
     async def _context(
         self,
@@ -280,16 +450,13 @@ class PlayerDataService:
         raise ValueError("玩家信息响应中未找到目标 UID")
 
     @classmethod
-    def _select_role_base(cls, payload: object, region_id: str) -> dict[str, object]:
+    def _select_role_detail(cls, payload: object, region_id: str) -> dict[str, object]:
         data = cls._response_data(payload)
         raw = data.get(region_id)
         if raw is None and len(data) == 1:
             raw = next(iter(data.values()))
         detail = cls._nested_json(raw)
-        base = detail.get("Base")
-        if not isinstance(base, dict):
-            raise ValueError("玩家详情响应缺少 Base")
-        return base
+        return detail
 
     @staticmethod
     def _response_data(payload: object) -> dict[str, object]:
@@ -338,6 +505,20 @@ class PlayerDataService:
                 bool(row["liveness_unlock"]) if row["liveness_unlock"] is not None else None
             ),
             weekly_inst_count=row["weekly_inst_count"],
+            battle_pass_present=bool(row["battle_pass_present"]),
+            battle_pass_level=row["battle_pass_level"],
+            battle_pass_week_exp=row["battle_pass_week_exp"],
+            battle_pass_week_max_exp=row["battle_pass_week_max_exp"],
+            battle_pass_is_unlock=(
+                bool(row["battle_pass_is_unlock"])
+                if row["battle_pass_is_unlock"] is not None
+                else None
+            ),
+            battle_pass_is_open=(
+                bool(row["battle_pass_is_open"]) if row["battle_pass_is_open"] is not None else None
+            ),
+            battle_pass_exp=row["battle_pass_exp"],
+            battle_pass_exp_limit=row["battle_pass_exp_limit"],
             sound_box=row["sound_box"],
             boxes=PlayerDataService._collection(row["boxes_json"]),
             basic_boxes=PlayerDataService._collection(row["basic_boxes_json"]),
@@ -385,6 +566,11 @@ class PlayerDataService:
     @staticmethod
     def _boolean(value: object) -> bool | None:
         return value if isinstance(value, bool) else None
+
+    @staticmethod
+    def _boolean_integer(value: object) -> int | None:
+        result = PlayerDataService._boolean(value)
+        return int(result) if result is not None else None
 
     @staticmethod
     def _text(value: object) -> str | None:

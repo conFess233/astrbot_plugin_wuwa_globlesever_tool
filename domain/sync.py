@@ -86,5 +86,6 @@ class SyncedCharacter:
 @dataclass(frozen=True, slots=True)
 class SyncResult:
     uid: str
+    region_id: str
     owned_count: int
     synced_at: str

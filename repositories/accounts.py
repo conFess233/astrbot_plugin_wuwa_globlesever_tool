@@ -1,9 +1,7 @@
 """已绑定国际服 UID 的查询、切换与解绑。"""
 
 import asyncio
-import hmac
 import json
-import secrets
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -11,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ..infrastructure.card_cache import remove_profile_cards
-from ..infrastructure.crypto import TokenCipher
 from ..infrastructure.database import Database
 
 
@@ -41,7 +38,7 @@ class AccountOverview:
 class PendingUnbind:
     uid: str
     region_id: str
-    code: str
+    expires_at: datetime
 
 
 def _now() -> datetime:
@@ -56,13 +53,9 @@ class AccountRepository:
     def __init__(
         self,
         database: Database,
-        cipher: TokenCipher,
-        confirm_ttl_minutes: int,
         card_cache_directory: Path | None = None,
     ):
         self.database = database
-        self.cipher = cipher
-        self.confirm_ttl_minutes = confirm_ttl_minutes
         self.card_cache_directory = card_cache_directory
 
     async def overview(self, qq_id: str) -> AccountOverview:
@@ -114,6 +107,16 @@ class AccountRepository:
 
         return await self.database.read(operation)
 
+    async def touch_origin(self, qq_id: str, origin_context: str) -> None:
+        if not origin_context:
+            return
+        await self.database.write(
+            lambda db: db.execute(
+                "UPDATE users SET last_origin_context = ?, updated_at = ? WHERE qq_id = ?",
+                (origin_context, _iso(), qq_id),
+            )
+        )
+
     async def switch(self, qq_id: str, value: str) -> str:
         target = value.strip()
 
@@ -128,15 +131,23 @@ class AccountRepository:
                 ).fetchone()
                 label = "本地"
             else:
-                rows = db.execute(
-                    "SELECT profile_id FROM profiles WHERE qq_id = ? AND uid = ? "
-                    "ORDER BY region_id",
-                    (qq_id, target),
+                numbered = db.execute(
+                    "SELECT p.profile_id, p.region_id, p.uid, g.region_name "
+                    "FROM profiles p JOIN game_accounts g "
+                    "ON g.region_id = p.region_id AND g.uid = p.uid "
+                    "WHERE p.qq_id = ? AND p.profile_type = 'uid' "
+                    "ORDER BY g.region_id, g.uid",
+                    (qq_id,),
                 ).fetchall()
-                if len(rows) > 1:
-                    raise AccountError("该 UID 绑定了多个区服，请通过 /kh 账号 的编号切换")
-                row = rows[0] if rows else None
-                label = target
+                if target.isdigit() and 1 <= int(target) <= len(numbered):
+                    row = numbered[int(target) - 1]
+                    label = f"{row['region_name']} · UID {row['uid']}"
+                else:
+                    rows = [item for item in numbered if str(item["uid"]) == target]
+                    if len(rows) > 1:
+                        raise AccountError("该 UID 绑定了多个区服，请通过 /kh 账号 的编号切换")
+                    row = rows[0] if rows else None
+                    label = target
             if row is None:
                 raise AccountError("未找到你绑定的该 UID")
             db.execute(
@@ -147,14 +158,14 @@ class AccountRepository:
 
         return await self.database.write(operation)
 
-    async def begin_unbind(self, qq_id: str, uid: str) -> PendingUnbind:
+    async def begin_unbind(self, qq_id: str, uid: str, origin_context: str) -> PendingUnbind:
         uid = uid.strip()
         if not uid:
             raise AccountError("UID 不能为空")
+        if not origin_context:
+            raise AccountError("当前会话无法安全绑定确认操作")
         action_id = uuid.uuid4().hex
-        code = "".join(secrets.choice("0123456789") for _ in range(6))
-        digest = self.cipher.account_identity_hmac(f"action:{action_id}:{code}")
-        expires_at = _now() + timedelta(minutes=self.confirm_ttl_minutes)
+        expires_at = _now() + timedelta(seconds=60)
 
         def operation(db: sqlite3.Connection) -> str:
             accounts = db.execute(
@@ -176,15 +187,12 @@ class AccountRepository:
                 region_id = str(active["region_id"])
             else:
                 region_id = str(accounts[0]["region_id"])
-            db.execute(
-                "DELETE FROM pending_actions WHERE qq_id = ? AND action_type = 'uid_unbind' "
-                "AND used_at IS NULL",
-                (qq_id,),
-            )
+            db.execute("DELETE FROM pending_actions WHERE qq_id = ?", (qq_id,))
+            summary = f"解绑 {region_id} 区服 UID {uid}"
             db.execute(
                 "INSERT INTO pending_actions (action_id, qq_id, action_type, payload_json, "
-                "confirm_code_hash, expires_at, created_at) "
-                "VALUES (?, ?, 'uid_unbind', ?, ?, ?, ?)",
+                "confirm_code_hash, expires_at, created_at, origin_context, summary) "
+                "VALUES (?, ?, 'uid_unbind', ?, '', ?, ?, ?, ?)",
                 (
                     action_id,
                     qq_id,
@@ -192,33 +200,29 @@ class AccountRepository:
                         {"region_id": region_id, "uid": uid},
                         separators=(",", ":"),
                     ),
-                    digest,
                     _iso(expires_at),
                     _iso(),
+                    origin_context,
+                    summary,
                 ),
             )
             return region_id
 
         region_id = await self.database.write(operation)
-        return PendingUnbind(uid, region_id, code)
+        return PendingUnbind(uid, region_id, expires_at)
 
-    async def confirm_unbind(self, qq_id: str, code: str) -> str | None:
+    async def confirm_unbind(self, qq_id: str, origin_context: str) -> str | None:
         now = _iso()
 
         def operation(
             db: sqlite3.Connection,
         ) -> tuple[str, tuple[int, ...]] | None:
-            rows = db.execute(
+            matched = db.execute(
                 "SELECT * FROM pending_actions WHERE qq_id = ? AND action_type = 'uid_unbind' "
-                "AND used_at IS NULL AND expires_at > ?",
-                (qq_id, now),
-            ).fetchall()
-            matched = None
-            for row in rows:
-                digest = self.cipher.account_identity_hmac(f"action:{row['action_id']}:{code}")
-                if hmac.compare_digest(digest, str(row["confirm_code_hash"])):
-                    matched = row
-                    break
+                "AND used_at IS NULL AND expires_at > ? AND origin_context = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (qq_id, now, origin_context),
+            ).fetchone()
             if matched is None:
                 return None
             payload = json.loads(str(matched["payload_json"]))

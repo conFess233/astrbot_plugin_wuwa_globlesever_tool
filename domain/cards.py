@@ -38,7 +38,6 @@ class CardCharacter:
     weapon_source: str | None
     weapon_level: int | None
     weapon_refinement: int | None
-    score: str
     updated_at: str
 
 
@@ -92,6 +91,14 @@ class DailyCard:
     liveness_max: int | None
     liveness_unlock: bool | None
     weekly_inst_count: int | None
+    battle_pass_present: bool
+    battle_pass_level: int | None
+    battle_pass_week_exp: int | None
+    battle_pass_week_max_exp: int | None
+    battle_pass_is_unlock: bool | None
+    battle_pass_is_open: bool | None
+    battle_pass_exp: int | None
+    battle_pass_exp_limit: int | None
     refreshed_at: str
 
 
@@ -118,3 +125,4 @@ CardViewModel = (
 class CardMessage:
     image_path: Path
     fallback_text: str
+    notice: str | None = None

@@ -1,9 +1,7 @@
 """纯本地档案与当前角色记录仓储。"""
 
 import asyncio
-import hmac
 import json
-import secrets
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -11,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ..infrastructure.card_cache import remove_profile_cards
-from ..infrastructure.crypto import TokenCipher
 from ..infrastructure.database import Database
 from ..services.catalog import CharacterDefinition
 
@@ -63,7 +60,7 @@ class ProfileSelection:
 @dataclass(frozen=True, slots=True)
 class PendingAction:
     action_type: str
-    code: str
+    summary: str
     expires_at: datetime
 
 
@@ -79,13 +76,9 @@ class LocalDataRepository:
     def __init__(
         self,
         database: Database,
-        cipher: TokenCipher,
-        confirm_ttl_minutes: int,
         card_cache_directory: Path | None = None,
     ):
         self.database = database
-        self.cipher = cipher
-        self.confirm_ttl_minutes = confirm_ttl_minutes
         self.card_cache_directory = card_cache_directory
 
     async def active_profile(self, qq_id: str, *, external_query: bool = False) -> ProfileSelection:
@@ -115,6 +108,24 @@ class LocalDataRepository:
                 db.execute(
                     "SELECT * FROM characters WHERE profile_id = ? AND character_id = ?",
                     (profile_id, character_id),
+                ).fetchone()
+            )
+        )
+
+    async def role_snapshot_updated_at(self, profile_id: int) -> str | None:
+        return await self.database.read(
+            lambda db: (
+                lambda row: (
+                    str(row["last_sync_success_at"])
+                    if row is not None and row["last_sync_success_at"]
+                    else None
+                )
+            )(
+                db.execute(
+                    "SELECT g.last_sync_success_at FROM profiles p "
+                    "JOIN game_accounts g ON g.region_id = p.region_id AND g.uid = p.uid "
+                    "WHERE p.profile_id = ?",
+                    (profile_id,),
                 ).fetchone()
             )
         )
@@ -258,38 +269,57 @@ class LocalDataRepository:
 
         return await self.database.write(operation)
 
-    async def begin_character_delete(self, qq_id: str, character_id: str) -> PendingAction:
+    async def begin_character_delete(
+        self,
+        qq_id: str,
+        character_id: str,
+        origin_context: str,
+    ) -> PendingAction:
+        profile = await self.active_profile(qq_id)
+        record = await self.get_character(profile.profile_id, character_id)
+        if record is None:
+            raise LocalDataError("当前档案中没有该角色记录")
+        if record.record_origin != "manual":
+            raise LocalDataError("接口拥有角色不能删除，只能重置手动字段")
+        return await self._begin_action(
+            qq_id,
+            "character_delete",
+            {"profile_id": profile.profile_id, "character_id": character_id},
+            origin_context,
+            f"删除纯本地角色 {record.character_name}",
+        )
+
+    async def begin_reset_all(
+        self,
+        qq_id: str,
+        character_id: str,
+        character_name: str,
+        origin_context: str,
+    ) -> PendingAction:
         profile = await self.active_profile(qq_id)
         record = await self.get_character(profile.profile_id, character_id)
         if record is None:
             raise LocalDataError("当前档案中没有该角色记录")
         return await self._begin_action(
             qq_id,
-            "character_delete",
+            "reset_all",
             {"profile_id": profile.profile_id, "character_id": character_id},
+            origin_context,
+            f"重置 {character_name} 的全部手动字段",
         )
 
-    async def begin_clear_data(self, qq_id: str) -> PendingAction:
-        await self.active_profile(qq_id)
-        return await self._begin_action(qq_id, "clear_data", {})
-
-    async def confirm(self, qq_id: str, code: str) -> str:
+    async def confirm(self, qq_id: str, origin_context: str) -> str:
         now = _now()
 
         def operation(db: sqlite3.Connection) -> tuple[str, tuple[int, ...]]:
-            rows = db.execute(
+            matched = db.execute(
                 "SELECT * FROM pending_actions WHERE qq_id = ? AND used_at IS NULL "
-                "AND expires_at > ?",
-                (qq_id, _iso(now)),
-            ).fetchall()
-            matched = None
-            for row in rows:
-                digest = self.cipher.account_identity_hmac(f"action:{row['action_id']}:{code}")
-                if hmac.compare_digest(digest, row["confirm_code_hash"]):
-                    matched = row
-                    break
+                "AND expires_at > ? AND origin_context = ? AND action_type != 'uid_unbind' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (qq_id, _iso(now), origin_context),
+            ).fetchone()
             if matched is None:
-                raise LocalDataError("确认码无效或已过期")
+                raise LocalDataError("当前会话没有待确认操作，或操作已过期")
 
             payload = json.loads(matched["payload_json"])
             action_type = str(matched["action_type"])
@@ -303,56 +333,90 @@ class LocalDataRepository:
                     (payload["profile_id"], payload["character_id"]),
                 )
                 return "角色记录已删除", (int(payload["profile_id"]),)
-            if action_type == "clear_data":
-                profile_ids = tuple(
-                    int(item["profile_id"])
-                    for item in db.execute(
-                        "SELECT profile_id FROM profiles WHERE qq_id = ?", (qq_id,)
-                    ).fetchall()
+            if action_type == "reset_all":
+                db.execute(
+                    "UPDATE characters SET manual_level = NULL, manual_chain = NULL, "
+                    "manual_weapon_id = NULL, manual_weapon_level = NULL, "
+                    "manual_weapon_refinement = NULL, last_manual_update_at = ?, updated_at = ? "
+                    "WHERE profile_id = ? AND character_id = ?",
+                    (
+                        _iso(now),
+                        _iso(now),
+                        payload["profile_id"],
+                        payload["character_id"],
+                    ),
                 )
-                db.execute("DELETE FROM users WHERE qq_id = ?", (qq_id,))
-                db.execute("DELETE FROM pending_logins WHERE requesting_qq_id = ?", (qq_id,))
-                db.execute("DELETE FROM pending_actions WHERE qq_id = ?", (qq_id,))
-                return "你的插件数据已全部清除", profile_ids
+                row = db.execute(
+                    "SELECT record_origin FROM characters "
+                    "WHERE profile_id = ? AND character_id = ?",
+                    (payload["profile_id"], payload["character_id"]),
+                ).fetchone()
+                if row is not None and str(row["record_origin"]) == "manual":
+                    db.execute(
+                        "DELETE FROM characters WHERE profile_id = ? AND character_id = ?",
+                        (payload["profile_id"], payload["character_id"]),
+                    )
+                elif row is not None and str(row["record_origin"]) == "mixed":
+                    db.execute(
+                        "UPDATE characters SET record_origin = 'api' "
+                        "WHERE profile_id = ? AND character_id = ?",
+                        (payload["profile_id"], payload["character_id"]),
+                    )
+                return "角色的全部手动字段已重置", (int(payload["profile_id"]),)
             raise LocalDataError("确认操作类型不受支持")
 
         message, profile_ids = await self.database.write(operation)
         await asyncio.to_thread(remove_profile_cards, self.card_cache_directory, profile_ids)
         return message
 
+    async def cancel(self, qq_id: str, origin_context: str) -> str:
+        if not origin_context:
+            raise LocalDataError("当前会话无法安全取消操作")
+
+        def operation(db: sqlite3.Connection) -> int:
+            cursor = db.execute(
+                "DELETE FROM pending_actions WHERE qq_id = ? AND used_at IS NULL "
+                "AND expires_at > ? AND origin_context = ?",
+                (qq_id, _iso(), origin_context),
+            )
+            return int(cursor.rowcount)
+
+        removed = await self.database.write(operation)
+        return "已取消待确认操作" if removed else "当前会话没有待确认操作"
+
     async def _begin_action(
         self,
         qq_id: str,
         action_type: str,
         payload: dict[str, object],
+        origin_context: str,
+        summary: str,
     ) -> PendingAction:
+        if not origin_context:
+            raise LocalDataError("当前会话无法安全绑定确认操作")
         action_id = uuid.uuid4().hex
-        code = "".join(secrets.choice("0123456789") for _ in range(6))
-        expires_at = _now() + timedelta(minutes=self.confirm_ttl_minutes)
-        digest = self.cipher.account_identity_hmac(f"action:{action_id}:{code}")
+        expires_at = _now() + timedelta(seconds=60)
 
         def operation(db: sqlite3.Connection) -> None:
-            db.execute(
-                "DELETE FROM pending_actions WHERE qq_id = ? AND action_type = ? "
-                "AND used_at IS NULL",
-                (qq_id, action_type),
-            )
+            db.execute("DELETE FROM pending_actions WHERE qq_id = ?", (qq_id,))
             db.execute(
                 "INSERT INTO pending_actions (action_id, qq_id, action_type, payload_json, "
-                "confirm_code_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "confirm_code_hash, expires_at, created_at, origin_context, summary) "
+                "VALUES (?, ?, ?, ?, '', ?, ?, ?, ?)",
                 (
                     action_id,
                     qq_id,
                     action_type,
                     json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-                    digest,
                     _iso(expires_at),
                     _iso(),
+                    origin_context,
+                    summary,
                 ),
             )
 
         await self.database.write(operation)
-        return PendingAction(action_type, code, expires_at)
+        return PendingAction(action_type, summary, expires_at)
 
     @staticmethod
     def _ensure_active_profile(db: sqlite3.Connection, qq_id: str) -> ProfileSelection:
@@ -418,47 +482,44 @@ class LocalDataRepository:
     @staticmethod
     def _to_record(row: sqlite3.Row) -> CharacterRecord:
         api_weapon_present = row["api_weapon_present"]
-        weapon_id = (
-            row["api_weapon_id"]
-            if api_weapon_present == 1
-            else None
-            if api_weapon_present == 0
-            else row["manual_weapon_id"]
-        )
+        api_weapon_used = api_weapon_present == 1 and row["api_weapon_id"] is not None
+        weapon_id = row["api_weapon_id"] if api_weapon_used else row["manual_weapon_id"]
         return CharacterRecord(
             profile_id=int(row["profile_id"]),
             character_id=str(row["character_id"]),
             character_name=str(row["character_name_snapshot"]),
             record_origin=str(row["record_origin"]),
-            level=row["api_level"] if row["api_level"] is not None else row["manual_level"],
-            chain=row["api_chain"] if row["api_chain"] is not None else row["manual_chain"],
+            level=row["manual_level"] if row["manual_level"] is not None else row["api_level"],
+            chain=row["manual_chain"] if row["manual_chain"] is not None else row["api_chain"],
             weapon_id=weapon_id,
-            weapon_name=row["api_weapon_name"] if weapon_id else None,
-            weapon_picture_url=row["api_weapon_picture_url"] if weapon_id else None,
-            weapon_star=row["api_weapon_star"] if weapon_id else None,
-            weapon_type_id=row["api_weapon_type_id"] if weapon_id else None,
-            weapon_type_picture_url=(row["api_weapon_type_picture_url"] if weapon_id else None),
+            weapon_name=(row["api_weapon_name"] if api_weapon_used else row["manual_weapon_id"]),
+            weapon_picture_url=row["api_weapon_picture_url"] if api_weapon_used else None,
+            weapon_star=row["api_weapon_star"] if api_weapon_used else None,
+            weapon_type_id=row["api_weapon_type_id"] if api_weapon_used else None,
+            weapon_type_picture_url=(
+                row["api_weapon_type_picture_url"] if api_weapon_used else None
+            ),
             weapon_level=row["manual_weapon_level"] if weapon_id else None,
             weapon_refinement=row["manual_weapon_refinement"] if weapon_id else None,
             score_total=row["score_total"],
             score_grade=row["score_grade"],
             level_source=(
-                "api"
-                if row["api_level"] is not None
-                else "manual"
+                "manual"
                 if row["manual_level"] is not None
+                else "api"
+                if row["api_level"] is not None
                 else None
             ),
             chain_source=(
-                "api"
-                if row["api_chain"] is not None
-                else "manual"
+                "manual"
                 if row["manual_chain"] is not None
+                else "api"
+                if row["api_chain"] is not None
                 else None
             ),
             weapon_source=(
                 "api"
-                if api_weapon_present in (0, 1)
+                if api_weapon_used
                 else "manual"
                 if row["manual_weapon_id"] is not None
                 else None

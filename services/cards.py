@@ -218,7 +218,7 @@ class CardService:
             kind="account_info",
             scope=f"uid-{snapshot.uid}-account-info",
             heading="账号信息",
-            profile_note=_cache_note(snapshot),
+            profile_note=None,
             player=self._player_header(snapshot),
             active_days=snapshot.active_days,
             created_at=_timestamp(snapshot.created_at_ms),
@@ -231,7 +231,7 @@ class CardService:
             kind="daily",
             scope=f"uid-{snapshot.uid}-daily",
             heading="日常状态",
-            profile_note=_cache_note(snapshot),
+            profile_note=None,
             player=self._player_header(snapshot),
             energy=snapshot.energy,
             max_energy=snapshot.max_energy,
@@ -243,6 +243,14 @@ class CardService:
             liveness_max=snapshot.liveness_max,
             liveness_unlock=snapshot.liveness_unlock,
             weekly_inst_count=snapshot.weekly_inst_count,
+            battle_pass_present=snapshot.battle_pass_present,
+            battle_pass_level=snapshot.battle_pass_level,
+            battle_pass_week_exp=snapshot.battle_pass_week_exp,
+            battle_pass_week_max_exp=snapshot.battle_pass_week_max_exp,
+            battle_pass_is_unlock=snapshot.battle_pass_is_unlock,
+            battle_pass_is_open=snapshot.battle_pass_is_open,
+            battle_pass_exp=snapshot.battle_pass_exp,
+            battle_pass_exp_limit=snapshot.battle_pass_exp_limit,
             refreshed_at=_display_time(snapshot.refreshed_at),
         )
         return await self._response(model, _daily_text(model))
@@ -252,7 +260,7 @@ class CardService:
             kind="exploration",
             scope=f"uid-{snapshot.uid}-exploration",
             heading="探索收集",
-            profile_note=_cache_note(snapshot),
+            profile_note=None,
             player=self._player_header(snapshot),
             sound_box=snapshot.sound_box,
             boxes=_collection_rows(snapshot.boxes, _BOX_NAMES),
@@ -290,8 +298,7 @@ class CardService:
             chain=record.chain,
             chain_source=record.chain_source,
             weapon_id=record.weapon_id,
-            weapon_name=record.weapon_name
-            or (f"武器 {record.weapon_id}" if record.weapon_id else None),
+            weapon_name=record.weapon_name,
             weapon_image_url=record.weapon_picture_url,
             weapon_star=record.weapon_star,
             weapon_type_name=_weapon_type_name(record),
@@ -299,7 +306,6 @@ class CardService:
             weapon_source=record.weapon_source,
             weapon_level=record.weapon_level,
             weapon_refinement=record.weapon_refinement,
-            score=_score(record),
             updated_at=record.updated_at,
         )
 
@@ -318,8 +324,7 @@ def _list_text(model: CharacterListCard) -> str:
     if model.profile_note:
         lines.append(model.profile_note)
     lines.extend(
-        f"{item.name}  Lv.{_value(item.level)}  {_value(item.chain)}链  评分 {item.score}"
-        for item in model.characters
+        f"{item.name}  Lv.{_value(item.level)}  {_value(item.chain)}链" for item in model.characters
     )
     if not model.characters:
         lines.append("暂无角色记录，可用 /kh 修改 <角色> 等级 <1-90> 创建。")
@@ -342,7 +347,6 @@ def _detail_text(model: CharacterDetailCard) -> str:
             f"武器等级：{_value(item.weapon_level)}",
             f"武器精炼：{_value(item.weapon_refinement)}",
             f"最后更新：{_display_time(item.updated_at)}",
-            f"评分：{item.score}",
         )
     )
     return "\n".join(lines)
@@ -374,8 +378,28 @@ def _daily_text(model: DailyCard) -> str:
         if model.liveness_unlock is False
         else f"每日活跃度：{_ratio(model.liveness, model.liveness_max)}",
         f"战歌重奏剩余奖励：{_value(model.weekly_inst_count)} / 3",
-        f"更新时间：{model.refreshed_at}",
     ]
+    if not model.battle_pass_present:
+        lines.append("先约电台：—")
+    else:
+        status = (
+            "未解锁"
+            if model.battle_pass_is_unlock is False
+            else "未开启"
+            if model.battle_pass_is_open is False
+            else "已开启"
+            if model.battle_pass_is_open is True
+            else "—"
+        )
+        lines.extend(
+            [
+                f"先约电台：{status} · 等级 {_value(model.battle_pass_level)}",
+                "电台经验："
+                f"{_ratio(model.battle_pass_exp, model.battle_pass_exp_limit)} · "
+                f"本周 {_ratio(model.battle_pass_week_exp, model.battle_pass_week_max_exp)}",
+            ]
+        )
+    lines.append(f"更新时间：{model.refreshed_at}")
     if model.profile_note:
         lines.insert(1, model.profile_note)
     return "\n".join(lines)
@@ -402,14 +426,6 @@ def _collection_rows(
 ) -> tuple[tuple[str, int | None], ...]:
     mapping = dict(values or ())
     return tuple((label, mapping.get(str(index))) for index, label in enumerate(labels, 1))
-
-
-def _cache_note(snapshot: PlayerSnapshot) -> str | None:
-    return (
-        f"实时刷新失败，当前展示 {_display_time(snapshot.refreshed_at)} 的本地缓存"
-        if snapshot.is_cached_fallback
-        else None
-    )
 
 
 def _profile_note(profile: ProfileSelection) -> str | None:
@@ -466,13 +482,6 @@ def _display_time(value: str | None) -> str:
     if not value:
         return "---"
     return value.replace("T", " ").replace("+00:00", " UTC")
-
-
-def _score(record: CharacterRecord) -> str:
-    if record.score_total is None:
-        return "---"
-    grade = f" {record.score_grade}" if record.score_grade else ""
-    return f"{record.score_total:g}{grade}"
 
 
 def _weapon_type_name(record: CharacterRecord) -> str | None:

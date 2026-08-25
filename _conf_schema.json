@@ -47,11 +47,23 @@
     "default": ["kh登录", "鸣潮登录"],
     "hint": "去除首尾空白后精确匹配。"
   },
+  "keyword_cancel_login": {
+    "description": "取消登录关键词",
+    "type": "list",
+    "default": ["kh取消登录", "鸣潮取消登录"],
+    "hint": "立即作废当前 QQ 的活动登录链接。"
+  },
   "keyword_account": {
     "description": "账号关键词",
     "type": "list",
     "default": ["kh账号", "鸣潮账号"],
     "hint": "去除首尾空白后精确匹配。"
+  },
+  "keyword_switch": {
+    "description": "切换账号关键词",
+    "type": "list",
+    "default": ["kh切换", "鸣潮切换"],
+    "hint": "关键词后必须提供账号编号或完整 UID。"
   },
   "keyword_character": {
     "description": "角色关键词",
@@ -77,29 +89,41 @@
     "default": ["kh探索", "鸣潮探索"],
     "hint": "支持查询对象前后置。"
   },
+  "keyword_refresh": {
+    "description": "角色数据刷新关键词",
+    "type": "list",
+    "default": ["kh刷新", "kh同步", "鸣潮刷新"],
+    "hint": "可在关键词后提供本人已绑定的完整 UID。"
+  },
   "allow_query_others": {
     "description": "允许查询其他 QQ",
     "type": "bool",
     "default": false,
     "hint": "全局开关；开放角色、账号信息和探索查询，日常始终仅限本人。"
   },
+  "query_refresh_enabled": {
+    "description": "账号查询前自动刷新玩家数据",
+    "type": "bool",
+    "default": true,
+    "hint": "全局开关；开启后账号信息、日常和探索在冷却外先刷新。关闭后优先读缓存，但首次查询仍自动获取。"
+  },
+  "player_refresh_cooldown_seconds": {
+    "description": "玩家数据查询刷新冷却（秒）",
+    "type": "int",
+    "default": 60,
+    "hint": "范围 0 到 3600；账号信息、日常和探索共用。"
+  },
+  "role_refresh_cooldown_minutes": {
+    "description": "用户角色刷新冷却（分钟）",
+    "type": "int",
+    "default": 5,
+    "hint": "范围 0 到 1440；按区服和 UID 独立计算。"
+  },
   "login_link_ttl_minutes": {
     "description": "登录链接有效分钟数",
     "type": "int",
     "default": 3,
     "hint": "范围 1 到 60。"
-  },
-  "confirm_ttl_minutes": {
-    "description": "确认码有效分钟数",
-    "type": "int",
-    "default": 5,
-    "hint": "范围 1 到 30。"
-  },
-  "confirm_max_attempts": {
-    "description": "确认码最大错误次数",
-    "type": "int",
-    "default": 5,
-    "hint": "范围 1 到 10。"
   },
   "login_rate_window_minutes": {
     "description": "网页登录限流窗口分钟数",
@@ -136,11 +160,11 @@
     "type": "bool",
     "default": false
   },
-  "auto_sync_interval_hours": {
-    "description": "自动同步间隔小时数",
+  "auto_sync_interval_minutes": {
+    "description": "后台角色同步周期（分钟）",
     "type": "int",
-    "default": 12,
-    "hint": "最小 6 小时。"
+    "default": 360,
+    "hint": "范围 30 到 1440。"
   },
   "sync_concurrency": {
     "description": "账号同步并发上限",
@@ -159,6 +183,24 @@
     "type": "int",
     "default": 20,
     "hint": "范围 5 到 120。"
+  },
+  "request_retry_count": {
+    "description": "幂等上游请求重试次数",
+    "type": "int",
+    "default": 2,
+    "hint": "范围 0 到 5；状态变更请求不会盲目重试。"
+  },
+  "player_refresh_timeout_seconds": {
+    "description": "玩家数据整体刷新超时（秒）",
+    "type": "int",
+    "default": 45,
+    "hint": "范围 10 到 180。"
+  },
+  "role_refresh_timeout_seconds": {
+    "description": "角色数据整体刷新超时（秒）",
+    "type": "int",
+    "default": 180,
+    "hint": "范围 30 到 600。"
   },
   "render_timeout_seconds": {
     "description": "图片卡渲染超时秒数",

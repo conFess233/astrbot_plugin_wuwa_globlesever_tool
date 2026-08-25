@@ -12,7 +12,7 @@ from astrbot.api.star import Context, Star, register
 from .clients.auth import GlobalAuthClient
 from .clients.guide import GlobalGuideClient
 from .commands.event_adapter import mentioned_users, plain_text
-from .commands.parser import CommandParseError, CommandParser
+from .commands.parser import CommandName, CommandParseError, CommandParser
 from .constants import PLUGIN_DISPLAY_NAME, PLUGIN_NAME, PLUGIN_VERSION
 from .domain.cards import CardMessage
 from .domain.login import LoginCompletionResult, LoginLinkMessage
@@ -159,14 +159,10 @@ class WuWaGlobalServerPlugin(Star):
         await self.http.initialize()
         self.repository = LocalDataRepository(
             self.database,
-            self.cipher,
-            self.settings.confirm_ttl_minutes,
             self.paths.media_cards,
         )
         self.accounts = AccountRepository(
             self.database,
-            self.cipher,
-            self.settings.confirm_ttl_minutes,
             self.paths.media_cards,
         )
         self.login_sessions = LoginSessionService(
@@ -181,8 +177,15 @@ class WuWaGlobalServerPlugin(Star):
             GlobalGuideClient(self.http),
             self.catalog,
             self.settings,
+            self._on_credential_invalidated,
         )
-        self.player_data = PlayerDataService(self.database, self.cipher, self.http)
+        self.player_data = PlayerDataService(
+            self.database,
+            self.cipher,
+            self.http,
+            self.settings,
+            self.paths.snapshots_raw,
+        )
         self.card_renderer = AstrBotCardRenderer(
             self.plugin_root / "assets" / "templates" / "wuwa_cards.html",
             self.paths.media_cards,
@@ -273,10 +276,13 @@ class WuWaGlobalServerPlugin(Star):
             actor_qq = str(event.get_sender_id() or "")
             if not actor_qq:
                 raise CommandServiceError("无法识别 QQ 用户 ID")
+            if parsed.name == CommandName.REFRESH:
+                await self._send(event, "开始刷新角色与账号数据…")
             result = await self.commands.execute(
                 actor_qq,
                 parsed,
                 origin_context=str(event.unified_msg_origin or ""),
+                is_admin=self._event_is_admin(event),
             )
         except (
             AccountError,
@@ -346,14 +352,12 @@ class WuWaGlobalServerPlugin(Star):
         await self.http.update_timeout(settings.request_timeout_seconds)
         self.settings = settings
         self.parser.update_settings(settings)
-        if self.repository is not None:
-            self.repository.confirm_ttl_minutes = settings.confirm_ttl_minutes
-        if self.accounts is not None:
-            self.accounts.confirm_ttl_minutes = settings.confirm_ttl_minutes
         if self.login_sessions is not None:
             self.login_sessions.settings = settings
         if self.sync_service is not None:
             await self.sync_service.update_settings(settings)
+        if self.player_data is not None:
+            self.player_data.settings = settings
         if self.card_renderer is not None:
             self.card_renderer.timeout_seconds = settings.render_timeout_seconds
         if self.commands is not None:
@@ -374,6 +378,12 @@ class WuWaGlobalServerPlugin(Star):
         except Exception:
             logger.exception("%s：图片卡发送失败，降级为文本", PLUGIN_DISPLAY_NAME)
             await event.send(MessageChain([Comp.Plain(message.fallback_text)]))
+            return
+        if message.notice:
+            try:
+                await event.send(MessageChain([Comp.Plain(message.notice)]))
+            except Exception:
+                logger.exception("%s：卡片附加提示发送失败", PLUGIN_DISPLAY_NAME)
 
     @staticmethod
     async def _send_login_link(event: AstrMessageEvent, message: LoginLinkMessage) -> None:
@@ -433,8 +443,10 @@ class WuWaGlobalServerPlugin(Star):
                 result.qq_id,
                 result.default_account.uid,
                 result.default_account.region_id,
+                background=True,
+                force=True,
             ),
-            self.player_data.query(
+            self.player_data.refresh(
                 result.qq_id,
                 uid=result.default_account.uid,
                 region_id=result.default_account.region_id,
@@ -458,6 +470,33 @@ class WuWaGlobalServerPlugin(Star):
             )
         except Exception:
             logger.exception("%s：登录刷新结果发送失败", PLUGIN_DISPLAY_NAME)
+
+    async def _on_credential_invalidated(self, qq_id: str, origin_context: str) -> None:
+        if not origin_context or "group" not in origin_context.casefold():
+            return
+        try:
+            await self.context.send_message(
+                origin_context,
+                MessageChain(
+                    [
+                        Comp.At(qq=qq_id),
+                        Comp.Plain(" 鸣潮国际服登录状态已失效，请在群内重新执行 /kh 登录。"),
+                    ]
+                ),
+            )
+        except Exception:
+            logger.exception("%s：凭据失效通知发送失败", PLUGIN_DISPLAY_NAME)
+
+    @staticmethod
+    def _event_is_admin(event: AstrMessageEvent) -> bool:
+        checker = getattr(event, "is_admin", None)
+        if callable(checker):
+            try:
+                return bool(checker())
+            except Exception:
+                return False
+        role = str(getattr(event, "role", "") or "").casefold()
+        return role in {"admin", "owner"}
 
     @staticmethod
     def _is_bot_message(event: AstrMessageEvent) -> bool:

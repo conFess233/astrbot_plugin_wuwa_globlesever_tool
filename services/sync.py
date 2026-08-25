@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TypeVar
 
+from ..application.refresh import SingleFlightCoordinator
 from ..domain.models import RegionUid
 from ..domain.sync import (
     GuideAuthenticationError,
@@ -40,6 +41,10 @@ class SyncError(ValueError):
     """表示可安全展示的同步失败。"""
 
 
+class SyncCooldownError(SyncError):
+    """表示用户主动刷新仍处于账号级冷却。"""
+
+
 @dataclass(frozen=True, slots=True)
 class _SyncContext:
     qq_id: str
@@ -66,15 +71,16 @@ class GuideSyncService:
         client: GuideSyncClient,
         catalog: CharacterCatalog,
         settings: PluginSettings,
+        credential_invalidated: Callable[[str, str], Awaitable[None]] | None = None,
     ):
         self.database = database
         self.cipher = cipher
         self.client = client
         self.catalog = catalog
         self.settings = settings
+        self.credential_invalidated = credential_invalidated
         self._global_gate = asyncio.Semaphore(settings.sync_concurrency)
-        self._flight_guard = asyncio.Lock()
-        self._flights: dict[str, asyncio.Task[SyncResult]] = {}
+        self._singleflight = SingleFlightCoordinator[SyncResult]()
         self._auto_task: asyncio.Task[None] | None = None
 
     async def sync(
@@ -82,21 +88,18 @@ class GuideSyncService:
         qq_id: str,
         uid: str | None = None,
         region_id: str | None = None,
+        *,
+        background: bool = False,
+        force: bool = False,
     ) -> SyncResult:
         context = await self._context(qq_id, uid, region_id)
+        if not background and not force:
+            await self._check_user_cooldown(context)
         flight_key = RegionUid(context.region_id, context.uid).cache_key
-        async with self._flight_guard:
-            task = self._flights.get(flight_key)
-            if task is None or task.done():
-                task = asyncio.create_task(self._run(context))
-                self._flights[flight_key] = task
-        try:
-            return await asyncio.shield(task)
-        finally:
-            if task.done():
-                async with self._flight_guard:
-                    if self._flights.get(flight_key) is task:
-                        self._flights.pop(flight_key, None)
+        result = await self._singleflight.run(flight_key, lambda: self._run(context))
+        if not background:
+            await self._mark_user_success(context)
+        return result
 
     def start_auto_sync(self) -> None:
         if self.settings.auto_sync_enabled and (self._auto_task is None or self._auto_task.done()):
@@ -124,21 +127,24 @@ class GuideSyncService:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        async with self._flight_guard:
-            flights = tuple(self._flights.values())
-        if flights:
-            await asyncio.gather(*flights, return_exceptions=True)
+        await self._singleflight.wait()
 
     async def _run(self, context: _SyncContext) -> SyncResult:
         async with self._global_gate:
             await self._mark_attempt(context)
             try:
-                result = await self._fetch_and_normalize(context)
-                return await self._commit(context, *result)
+                async with asyncio.timeout(self.settings.role_refresh_timeout_seconds):
+                    result = await self._fetch_and_normalize(context)
+                    committed = await self._commit(context, *result)
+                await self._mark_success(context)
+                return committed
             except GuideAuthenticationError as exc:
-                await self._mark_failure(context, "needs_login", "authentication")
+                origin = await self._mark_failure(context, "needs_login", "authentication")
+                if origin and self.credential_invalidated is not None:
+                    with contextlib.suppress(Exception):
+                        await self.credential_invalidated(context.qq_id, origin)
                 raise SyncError("登录状态已失效，请重新执行 /kh 登录") from exc
-            except GuideUnavailableError as exc:
+            except (GuideUnavailableError, asyncio.TimeoutError) as exc:
                 await self._mark_failure(context, "failed", "network")
                 raise SyncError("攻略站暂时不可用，已保留上次同步数据") from exc
             except (
@@ -167,11 +173,7 @@ class GuideSyncService:
         player = next((item for item in players if item.uid == context.uid), None)
         if player is None or player.region_id != context.region_id:
             raise GuideError("攻略站账号中未找到绑定的 UID")
-        await self._retry(
-            lambda: self.client.choose_player(
-                token, context.language, context.uid, context.region_id
-            )
-        )
+        await self.client.choose_player(token, context.language, context.uid, context.region_id)
         avatars = await self._retry(lambda: self.client.avatars(token, context.language))
         owned = tuple(avatar for avatar in avatars if avatar.is_acquired)
         role_gate = asyncio.Semaphore(self.settings.role_detail_concurrency)
@@ -243,9 +245,7 @@ class GuideSyncService:
         access_token = str(sensitive.get("access_token") or "")
         if not c_uid or not access_token:
             raise GuideAuthenticationError("刷新攻略站登录状态所需凭据缺失")
-        token = await self._retry(
-            lambda: self.client.login(c_uid, c_name, access_token, context.language)
-        )
+        token = await self.client.login(c_uid, c_name, access_token, context.language)
         sensitive["guide_token"] = token
         encrypted = self.cipher.encrypt_text(
             json.dumps(sensitive, ensure_ascii=False, separators=(",", ":"))
@@ -260,11 +260,12 @@ class GuideSyncService:
         return token
 
     async def _retry(self, operation: Callable[[], Awaitable[_T]]) -> _T:
-        for attempt in range(3):
+        attempts = self.settings.request_retry_count + 1
+        for attempt in range(attempts):
             try:
                 return await operation()
             except GuideUnavailableError:
-                if attempt == 2:
+                if attempt + 1 >= attempts:
                     raise
                 await asyncio.sleep((0.4 * (2**attempt)) + random.uniform(0, 0.2))
         raise AssertionError("unreachable")
@@ -332,10 +333,11 @@ class GuideSyncService:
             )
         )
 
-    async def _mark_failure(self, context: _SyncContext, status: str, category: str) -> None:
-        now = _iso()
+    async def _mark_failure(self, context: _SyncContext, status: str, category: str) -> str | None:
+        current = _now()
+        now = _iso(current)
 
-        def operation(db: sqlite3.Connection) -> None:
+        def operation(db: sqlite3.Connection) -> str | None:
             db.execute(
                 "UPDATE game_accounts SET sync_status = ?, last_sync_attempt_at = ?, "
                 "last_error_category = ? "
@@ -360,8 +362,109 @@ class GuideSyncService:
                     "last_error_category = 'authentication' WHERE credential_id = ?",
                     (context.credential_id,),
                 )
+            row = db.execute(
+                "SELECT failure_count FROM refresh_states WHERE refresh_kind = 'role' "
+                "AND region_id = ? AND uid = ?",
+                (context.region_id, context.uid),
+            ).fetchone()
+            failure_count = int(row["failure_count"]) + 1 if row else 1
+            backoff_minutes = min(360, 5 * (2 ** min(failure_count - 1, 7)))
+            backoff_until = _iso(current + timedelta(minutes=backoff_minutes))
+            db.execute(
+                "INSERT INTO refresh_states (refresh_kind, region_id, uid, last_attempt_at, "
+                "failure_count, backoff_until, last_error_category, updated_at) "
+                "VALUES ('role', ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(refresh_kind, region_id, uid) DO UPDATE SET "
+                "last_attempt_at = excluded.last_attempt_at, "
+                "failure_count = excluded.failure_count, "
+                "backoff_until = excluded.backoff_until, "
+                "last_error_category = excluded.last_error_category, "
+                "updated_at = excluded.updated_at",
+                (
+                    context.region_id,
+                    context.uid,
+                    now,
+                    failure_count,
+                    backoff_until,
+                    category,
+                    now,
+                ),
+            )
+            if status != "needs_login":
+                return None
+            credential = db.execute(
+                "SELECT notification_suppressed_until FROM credentials WHERE credential_id = ?",
+                (context.credential_id,),
+            ).fetchone()
+            suppressed = (
+                str(credential["notification_suppressed_until"] or "") if credential else ""
+            )
+            if suppressed and suppressed > now:
+                return None
+            user = db.execute(
+                "SELECT last_origin_context FROM users WHERE qq_id = ?",
+                (context.qq_id,),
+            ).fetchone()
+            origin = str(user["last_origin_context"] or "") if user else ""
+            db.execute(
+                "UPDATE credentials SET notification_suppressed_until = ?, updated_at = ? "
+                "WHERE credential_id = ?",
+                (_iso(current + timedelta(hours=24)), now, context.credential_id),
+            )
+            return origin or None
 
-        await self.database.write(operation)
+        return await self.database.write(operation)
+
+    async def _mark_success(self, context: _SyncContext) -> None:
+        now = _iso()
+        await self.database.write(
+            lambda db: db.execute(
+                "INSERT INTO refresh_states (refresh_kind, region_id, uid, last_attempt_at, "
+                "last_success_at, failure_count, updated_at) VALUES ('role', ?, ?, ?, ?, 0, ?) "
+                "ON CONFLICT(refresh_kind, region_id, uid) DO UPDATE SET "
+                "last_attempt_at = excluded.last_attempt_at, "
+                "last_success_at = excluded.last_success_at, failure_count = 0, "
+                "backoff_until = NULL, last_error_category = NULL, "
+                "updated_at = excluded.updated_at",
+                (context.region_id, context.uid, now, now, now),
+            )
+        )
+
+    async def _check_user_cooldown(self, context: _SyncContext) -> None:
+        if self.settings.role_refresh_cooldown_minutes == 0:
+            return
+        row = await self.database.read(
+            lambda db: db.execute(
+                "SELECT last_user_refresh_at FROM refresh_states WHERE refresh_kind = 'role' "
+                "AND region_id = ? AND uid = ?",
+                (context.region_id, context.uid),
+            ).fetchone()
+        )
+        if row is None or not row["last_user_refresh_at"]:
+            return
+        try:
+            refreshed = datetime.fromisoformat(str(row["last_user_refresh_at"]))
+        except ValueError:
+            return
+        if refreshed.tzinfo is None:
+            refreshed = refreshed.replace(tzinfo=UTC)
+        remaining = (
+            timedelta(minutes=self.settings.role_refresh_cooldown_minutes)
+            - (_now() - refreshed.astimezone(UTC))
+        ).total_seconds()
+        if remaining > 0:
+            minutes = max(1, int((remaining + 59) // 60))
+            raise SyncCooldownError(f"该账号角色数据仍在刷新冷却中，请约 {minutes} 分钟后重试")
+
+    async def _mark_user_success(self, context: _SyncContext) -> None:
+        now = _iso()
+        await self.database.write(
+            lambda db: db.execute(
+                "UPDATE refresh_states SET last_user_refresh_at = ?, updated_at = ? "
+                "WHERE refresh_kind = 'role' AND region_id = ? AND uid = ?",
+                (now, now, context.region_id, context.uid),
+            )
+        )
 
     async def _commit(
         self,
@@ -409,7 +512,7 @@ class GuideSyncService:
                 "updated_at = ? WHERE credential_id = ?",
                 (synced_at, synced_at, context.credential_id),
             )
-            return SyncResult(context.uid, len(characters), synced_at)
+            return SyncResult(context.uid, context.region_id, len(characters), synced_at)
 
         return await self.database.write(operation)
 
@@ -513,13 +616,17 @@ class GuideSyncService:
             due = await self._due_accounts()
             if due:
                 await asyncio.gather(
-                    *(self.sync(qq_id, uid, region_id) for qq_id, region_id, uid in due),
+                    *(
+                        self.sync(qq_id, uid, region_id, background=True)
+                        for qq_id, region_id, uid in due
+                    ),
                     return_exceptions=True,
                 )
             await asyncio.sleep(900 + random.uniform(0, 300))
 
     async def _due_accounts(self) -> tuple[tuple[str, str, str], ...]:
-        threshold = _iso(_now() - timedelta(hours=self.settings.auto_sync_interval_hours))
+        threshold = _iso(_now() - timedelta(minutes=self.settings.auto_sync_interval_minutes))
+        now = _iso()
         return await self.database.read(
             lambda db: tuple(
                 (
@@ -528,10 +635,15 @@ class GuideSyncService:
                     str(row["uid"]),
                 )
                 for row in db.execute(
-                    "SELECT qq_id, region_id, uid FROM game_accounts "
-                    "WHERE last_sync_success_at IS NULL "
-                    "OR last_sync_success_at < ? ORDER BY COALESCE(last_sync_success_at, '')",
-                    (threshold,),
+                    "SELECT g.qq_id, g.region_id, g.uid FROM game_accounts g "
+                    "JOIN credentials c ON c.credential_id = g.credential_id "
+                    "LEFT JOIN refresh_states r ON r.refresh_kind = 'role' "
+                    "AND r.region_id = g.region_id AND r.uid = g.uid "
+                    "WHERE c.token_status = 'valid' AND c.revoked_at IS NULL "
+                    "AND (r.backoff_until IS NULL OR r.backoff_until <= ?) "
+                    "AND (g.last_sync_success_at IS NULL OR g.last_sync_success_at < ?) "
+                    "ORDER BY COALESCE(g.last_sync_success_at, '')",
+                    (now, threshold),
                 ).fetchall()
             )
         )

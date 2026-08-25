@@ -33,7 +33,6 @@
     .role-info { padding: 8px 7px 9px; }
     .role-name { overflow: hidden; font-size: 18px; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
     .role-meta { display: flex; justify-content: space-between; margin-top: 4px; color: #b9bdbd; font-size: 13px; }
-    .score-mark { color: #c7b888; }
     .empty { padding: 80px 20px; border: 1px solid #555; text-align: center; color: #aaa; font-size: 24px; }
     .detail { display: grid; grid-template-columns: 410px 1fr; gap: 18px; }
     .hero { position: relative; min-height: 600px; overflow: hidden; border: 1px solid #696c6c; background: #25292c; }
@@ -51,7 +50,6 @@
     .weapon-image img { width: 100%; height: 100%; object-fit: contain; }
     .weapon-name { margin-top: 6px; font-size: 22px; font-weight: 700; }
     .stars { margin-top: 7px; color: #d5bd65; letter-spacing: 2px; }
-    .score { margin: 0 18px 18px; padding: 12px; border: 1px solid #6b6250; color: #d7c58f; text-align: center; font-size: 24px; }
     .data-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     .data-card { min-height: 126px; padding: 18px; border: 1px solid #5c6061; background: #222528; }
     .data-card.wide { grid-column: span 2; }
@@ -90,7 +88,7 @@
       {% for item in characters %}<article class="role">
         <div class="role-image">{% if item.image_url %}<img src="{{ item.image_url }}" alt="">{% endif %}</div>
         <div class="chain{% if (item.chain or 0) >= 6 %} high{% endif %}">{{ item.chain if item.chain is not none else '---' }}链</div>
-        <div class="role-info"><div class="role-name">{{ item.name }}</div><div class="role-meta"><span>Lv.{{ item.level if item.level is not none else '---' }}</span><span class="score-mark">{{ item.score }}</span></div></div>
+        <div class="role-info"><div class="role-name">{{ item.name }}</div><div class="role-meta"><span>Lv.{{ item.level if item.level is not none else '---' }}</span></div></div>
       </article>{% endfor %}
     </section>{% else %}<div class="empty">暂无角色记录</div>{% endif %}
   {% elif kind == 'character_detail' %}
@@ -105,13 +103,11 @@
           <div class="stat"><span class="muted">角色等级</span><b>Lv.{{ character.level if character.level is not none else '---' }}</b></div>
           <div class="stat"><span class="muted">共鸣链</span><b>{{ character.chain if character.chain is not none else '---' }} 链</b></div>
           <div class="stat"><span class="muted">数据来源</span><b>{{ {'api':'接口','manual':'手动','mixed':'混合'}.get(character.origin, '---') }}</b></div>
-          <div class="stat"><span class="muted">角色评分</span><b>{{ character.score }}</b></div>
         </div>
         <div class="weapon">
           <div class="weapon-image">{% if character.weapon_image_url %}<img src="{{ character.weapon_image_url }}" alt="">{% else %}<span class="muted">无图片</span>{% endif %}</div>
           <div><span class="muted">当前武器</span><div class="weapon-name">{{ character.weapon_name or '---' }}</div><div class="stars">{% for _ in range(character.weapon_star or 0) %}★{% endfor %}</div><div class="data-extra">{{ character.weapon_type_name or '类型未知' }} · Lv.{{ character.weapon_level if character.weapon_level is not none else '---' }} · 精炼 {{ character.weapon_refinement if character.weapon_refinement is not none else '---' }}</div></div>
         </div>
-        <div class="score">评分预留 {{ character.score }}</div>
       </div>
     </section>
   {% elif kind == 'account_info' %}
