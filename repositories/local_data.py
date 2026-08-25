@@ -48,11 +48,16 @@ class CharacterRecord:
 class ProfileSelection:
     profile_id: int
     profile_type: str
+    region_id: str | None
     uid: str | None
 
     @property
     def label(self) -> str:
-        return "纯本地" if self.profile_type == "local" else f"UID {self.uid}"
+        return (
+            "纯本地"
+            if self.profile_type == "local"
+            else f"{self.region_id or '未知区服'} · UID {self.uid}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,7 +254,7 @@ class LocalDataRepository:
                 "UPDATE users SET active_profile_id = ?, updated_at = ? WHERE qq_id = ?",
                 (local_id, _iso(), qq_id),
             )
-            return ProfileSelection(local_id, "local", None)
+            return ProfileSelection(local_id, "local", None, None)
 
         return await self.database.write(operation)
 
@@ -373,25 +378,38 @@ class LocalDataRepository:
             (local_id, qq_id),
         )
         row = db.execute(
-            "SELECT p.profile_id, p.profile_type, p.uid FROM users u "
+            "SELECT p.profile_id, p.profile_type, p.region_id, p.uid FROM users u "
             "JOIN profiles p ON p.profile_id = u.active_profile_id WHERE u.qq_id = ?",
             (qq_id,),
         ).fetchone()
-        return ProfileSelection(int(row["profile_id"]), str(row["profile_type"]), row["uid"])
+        return ProfileSelection(
+            int(row["profile_id"]),
+            str(row["profile_type"]),
+            row["region_id"],
+            row["uid"],
+        )
 
     @staticmethod
     def _external_profile(db: sqlite3.Connection, qq_id: str) -> ProfileSelection | None:
         row = db.execute(
-            "SELECT p.profile_id, p.profile_type, p.uid FROM users u "
+            "SELECT p.profile_id, p.profile_type, p.region_id, p.uid FROM users u "
             "JOIN profiles p ON p.qq_id = u.qq_id "
-            "WHERE u.qq_id = ? AND ((u.default_uid IS NOT NULL AND p.uid = u.default_uid) "
+            "WHERE u.qq_id = ? AND (("
+            "u.default_region_id IS NOT NULL AND u.default_uid IS NOT NULL "
+            "AND p.region_id = u.default_region_id AND p.uid = u.default_uid) "
             "OR (u.default_uid IS NULL AND p.profile_type = 'local')) "
-            "ORDER BY CASE WHEN p.uid = u.default_uid THEN 0 ELSE 1 END LIMIT 1",
+            "ORDER BY CASE WHEN p.region_id = u.default_region_id "
+            "AND p.uid = u.default_uid THEN 0 ELSE 1 END LIMIT 1",
             (qq_id,),
         ).fetchone()
         if row is None:
             return None
-        return ProfileSelection(int(row["profile_id"]), str(row["profile_type"]), row["uid"])
+        return ProfileSelection(
+            int(row["profile_id"]),
+            str(row["profile_type"]),
+            row["region_id"],
+            row["uid"],
+        )
 
     @staticmethod
     def _optional_record(row: sqlite3.Row | None) -> CharacterRecord | None:

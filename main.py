@@ -1,5 +1,6 @@
 """AstrBot 插件入口，仅负责注册、生命周期和依赖装配。"""
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -16,10 +17,11 @@ from .constants import PLUGIN_DISPLAY_NAME, PLUGIN_NAME, PLUGIN_VERSION
 from .domain.cards import CardMessage
 from .domain.login import LoginLinkMessage
 from .domain.player import PlayerDataError
+from .infrastructure.card_cache import remove_all_cards
 from .infrastructure.crypto import MasterKeyProvider, TokenCipher
 from .infrastructure.database import Database
 from .infrastructure.http import HttpClient
-from .infrastructure.paths import RuntimePaths
+from .infrastructure.storage import RuntimePaths
 from .repositories.accounts import AccountError, AccountRepository
 from .repositories.local_data import LocalDataError, LocalDataRepository
 from .services.backups import BackupService
@@ -146,7 +148,12 @@ class WuWaGlobalServerPlugin(Star):
         self.paths.ensure()
         master_key = MasterKeyProvider(self.paths.secrets).load_or_create()
         self.cipher = TokenCipher(master_key)
-        await self.database.initialize()
+        migration = await self.database.initialize()
+        if migration.from_version < 5 <= migration.to_version:
+            removed = await asyncio.to_thread(remove_all_cards, self.paths.media_cards)
+            logger.info(
+                "%s：复合账号迁移完成，已清理 %s 张旧卡片缓存", PLUGIN_DISPLAY_NAME, removed
+            )
         await self.http.initialize()
         self.repository = LocalDataRepository(
             self.database,

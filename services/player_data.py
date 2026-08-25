@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 import aiohttp
 
+from ..domain.models import RegionUid
 from ..domain.player import PlayerDataError, PlayerSnapshot
 from ..infrastructure.crypto import CryptoError, TokenCipher
 from ..infrastructure.database import Database
@@ -42,13 +43,20 @@ class PlayerDataService:
         *,
         external_query: bool = False,
         uid: str | None = None,
+        region_id: str | None = None,
     ) -> PlayerSnapshot:
-        context = await self._context(qq_id, external_query=external_query, uid=uid)
+        context = await self._context(
+            qq_id,
+            external_query=external_query,
+            uid=uid,
+            region_id=region_id,
+        )
+        flight_key = RegionUid(context.region_id, context.uid).cache_key
         async with self._guard:
-            task = self._flights.get(context.uid)
+            task = self._flights.get(flight_key)
             if task is None or task.done():
                 task = asyncio.create_task(self._refresh(context))
-                self._flights[context.uid] = task
+                self._flights[flight_key] = task
         try:
             return await asyncio.shield(task)
         except (
@@ -61,15 +69,20 @@ class PlayerDataService:
             PlayerDataError,
             json.JSONDecodeError,
         ) as exc:
-            cached = await self.cached(qq_id, external_query=external_query, uid=context.uid)
+            cached = await self.cached(
+                qq_id,
+                external_query=external_query,
+                uid=context.uid,
+                region_id=context.region_id,
+            )
             if cached is not None:
                 return replace(cached, is_cached_fallback=True)
             raise PlayerDataError("玩家详情刷新失败，且本地没有可用缓存，请重新登录后重试") from exc
         finally:
             if task.done():
                 async with self._guard:
-                    if self._flights.get(context.uid) is task:
-                        self._flights.pop(context.uid, None)
+                    if self._flights.get(flight_key) is task:
+                        self._flights.pop(flight_key, None)
 
     async def cached(
         self,
@@ -77,14 +90,21 @@ class PlayerDataService:
         *,
         external_query: bool = False,
         uid: str | None = None,
+        region_id: str | None = None,
     ) -> PlayerSnapshot | None:
-        context = await self._context(qq_id, external_query=external_query, uid=uid)
+        context = await self._context(
+            qq_id,
+            external_query=external_query,
+            uid=uid,
+            region_id=region_id,
+        )
         return await self.database.read(
             lambda db: self._snapshot_from_row(
                 db.execute(
                     "SELECT s.*, g.region_id, g.region_name FROM player_snapshots s "
-                    "JOIN game_accounts g ON g.uid = s.uid WHERE s.uid = ? AND g.qq_id = ?",
-                    (context.uid, context.qq_id),
+                    "JOIN game_accounts g ON g.region_id = s.region_id AND g.uid = s.uid "
+                    "WHERE s.region_id = ? AND s.uid = ? AND g.qq_id = ?",
+                    (context.region_id, context.uid, context.qq_id),
                 ).fetchone()
             )
         )
@@ -101,7 +121,11 @@ class PlayerDataService:
             allowed_hosts=_ALLOWED_HOSTS,
             max_bytes=_MAX_RESPONSE_BYTES,
         )
-        region_id, player = self._select_player(player_response, context.uid)
+        region_id, player = self._select_player(
+            player_response,
+            context.uid,
+            context.region_id,
+        )
         role_response = await self.http.post_json(
             _ROLE_URL,
             {"oauthCode": oauth_code, "playerId": int(context.uid), "region": region_id},
@@ -137,22 +161,34 @@ class PlayerDataService:
         def operation(db: sqlite3.Connection) -> PlayerSnapshot:
             columns = tuple(values)
             db.execute(
-                f"INSERT INTO player_snapshots (uid, {', '.join(columns)}, refreshed_at) "
-                f"VALUES (?, {', '.join('?' for _ in columns)}, ?) "
-                "ON CONFLICT(uid) DO UPDATE SET "
+                f"INSERT INTO player_snapshots "
+                f"(region_id, uid, {', '.join(columns)}, refreshed_at) "
+                f"VALUES (?, ?, {', '.join('?' for _ in columns)}, ?) "
+                "ON CONFLICT(region_id, uid) DO UPDATE SET "
                 + ", ".join(f"{column} = excluded.{column}" for column in columns)
                 + ", refreshed_at = excluded.refreshed_at",
-                (context.uid, *(values[column] for column in columns), refreshed_at),
+                (
+                    context.region_id,
+                    context.uid,
+                    *(values[column] for column in columns),
+                    refreshed_at,
+                ),
             )
             db.execute(
                 "UPDATE game_accounts SET player_name = COALESCE(?, player_name) "
-                "WHERE uid = ? AND qq_id = ?",
-                (values["player_name"], context.uid, context.qq_id),
+                "WHERE region_id = ? AND uid = ? AND qq_id = ?",
+                (
+                    values["player_name"],
+                    context.region_id,
+                    context.uid,
+                    context.qq_id,
+                ),
             )
             row = db.execute(
                 "SELECT s.*, g.region_id, g.region_name FROM player_snapshots s "
-                "JOIN game_accounts g ON g.uid = s.uid WHERE s.uid = ?",
-                (context.uid,),
+                "JOIN game_accounts g ON g.region_id = s.region_id AND g.uid = s.uid "
+                "WHERE s.region_id = ? AND s.uid = ?",
+                (context.region_id, context.uid),
             ).fetchone()
             snapshot = self._snapshot_from_row(row)
             if snapshot is None:
@@ -167,30 +203,54 @@ class PlayerDataService:
         *,
         external_query: bool,
         uid: str | None,
+        region_id: str | None,
     ) -> _Context:
         def operation(db: sqlite3.Connection) -> _Context:
             user = db.execute(
-                "SELECT default_uid, active_profile_id FROM users WHERE qq_id = ?", (qq_id,)
+                "SELECT default_region_id, default_uid, active_profile_id "
+                "FROM users WHERE qq_id = ?",
+                (qq_id,),
             ).fetchone()
             if user is None:
                 raise PlayerDataError("尚未绑定国际服 UID，请先执行 /kh 登录")
             if uid:
                 target_uid = uid
+                target_region_id = str(region_id or "")
             elif external_query:
                 target_uid = str(user["default_uid"] or "")
+                target_region_id = str(user["default_region_id"] or "")
             else:
                 active = db.execute(
-                    "SELECT uid FROM profiles WHERE profile_id = ? AND profile_type = 'uid'",
+                    "SELECT region_id, uid FROM profiles "
+                    "WHERE profile_id = ? AND profile_type = 'uid'",
                     (user["active_profile_id"],),
                 ).fetchone()
                 target_uid = str(active["uid"] or "") if active else ""
+                target_region_id = str(active["region_id"] or "") if active else ""
             if not target_uid:
                 raise PlayerDataError("当前活动档案不是国际服 UID，请先执行 /kh 切换 <UID>")
+            if not target_region_id:
+                active = db.execute(
+                    "SELECT region_id, uid FROM profiles "
+                    "WHERE profile_id = ? AND profile_type = 'uid'",
+                    (user["active_profile_id"],),
+                ).fetchone()
+                if active is not None and str(active["uid"]) == target_uid:
+                    target_region_id = str(active["region_id"])
+            if not target_region_id:
+                matches = db.execute(
+                    "SELECT region_id FROM game_accounts WHERE qq_id = ? AND uid = ? "
+                    "ORDER BY region_id",
+                    (qq_id, target_uid),
+                ).fetchall()
+                if len(matches) > 1:
+                    raise PlayerDataError("该 UID 绑定了多个区服，请先切换到目标账号")
+                target_region_id = str(matches[0]["region_id"]) if matches else ""
             row = db.execute(
                 "SELECT g.uid, g.region_id, g.region_name, c.encrypted_tokens "
                 "FROM game_accounts g JOIN credentials c ON c.credential_id = g.credential_id "
-                "WHERE g.qq_id = ? AND g.uid = ?",
-                (qq_id, target_uid),
+                "WHERE g.qq_id = ? AND g.region_id = ? AND g.uid = ?",
+                (qq_id, target_region_id, target_uid),
             ).fetchone()
             if row is None:
                 raise PlayerDataError("未找到绑定的国际服 UID")
@@ -205,12 +265,18 @@ class PlayerDataService:
         return await self.database.read(operation)
 
     @classmethod
-    def _select_player(cls, payload: object, uid: str) -> tuple[str, dict[str, object]]:
+    def _select_player(
+        cls,
+        payload: object,
+        uid: str,
+        region_id: str,
+    ) -> tuple[str, dict[str, object]]:
         data = cls._response_data(payload)
-        for region_id, raw in data.items():
+        raw = data.get(region_id)
+        if raw is not None:
             player = cls._nested_json(raw)
             if str(player.get("roleId") or "") == uid:
-                return str(region_id), player
+                return region_id, player
         raise ValueError("玩家信息响应中未找到目标 UID")
 
     @classmethod

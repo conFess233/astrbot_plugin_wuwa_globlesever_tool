@@ -13,7 +13,7 @@ from ..constants import PLUGIN_VERSION, SCHEMA_VERSION
 from ..infrastructure.card_cache import remove_profile_cards
 from ..infrastructure.crypto import TokenCipher
 from ..infrastructure.database import Database
-from ..infrastructure.paths import RuntimePaths
+from ..infrastructure.storage import RuntimePaths
 from .catalog import CharacterCatalog
 from .settings import PluginSettings
 
@@ -113,17 +113,21 @@ class DashboardService:
             )
             total = int(db.execute(f"SELECT COUNT(*){base}{where}", parameters).fetchone()[0])
             rows = db.execute(
-                "SELECT u.qq_id, u.default_uid, c.email_masked, c.token_status, "
+                "SELECT u.qq_id, u.default_region_id, u.default_uid, "
+                "c.email_masked, c.token_status, "
                 "g.uid, g.region_id, g.region_name, g.player_name, g.sync_status, "
                 "g.last_sync_attempt_at, g.last_sync_success_at, g.last_error_category "
-                f"{base}{where} ORDER BY u.qq_id, g.uid LIMIT ? OFFSET ?",
+                f"{base}{where} ORDER BY u.qq_id, g.region_id, g.uid LIMIT ? OFFSET ?",
                 (*parameters, page_size, (page - 1) * page_size),
             ).fetchall()
             return {
                 "items": [
                     {
                         **dict(row),
-                        "is_default": str(row["default_uid"] or "") == str(row["uid"]),
+                        "is_default": (
+                            str(row["default_region_id"] or "") == str(row["region_id"])
+                            and str(row["default_uid"] or "") == str(row["uid"])
+                        ),
                     }
                     for row in rows
                 ],
@@ -140,31 +144,54 @@ class DashboardService:
             raise DashboardError("必须完整输入要解绑的 UID 进行确认")
 
         def operation(db: sqlite3.Connection) -> dict[str, object]:
-            row = db.execute(
+            rows = db.execute(
                 "SELECT g.qq_id, g.credential_id, p.profile_id "
                 "FROM game_accounts g LEFT JOIN profiles p ON p.qq_id = g.qq_id "
-                "AND p.uid = g.uid WHERE g.uid = ?",
+                "AND p.region_id = g.region_id AND p.uid = g.uid WHERE g.uid = ? "
+                "ORDER BY g.region_id",
                 (uid,),
-            ).fetchone()
-            if row is None:
+            ).fetchall()
+            if not rows:
                 raise DashboardError("UID 不存在")
+            if len(rows) > 1:
+                raise DashboardError("该 UID 存在于多个区服，请等待后台按区服解绑功能升级")
+            row = rows[0]
             qq_id = str(row["qq_id"])
             credential_id = int(row["credential_id"])
-            db.execute("DELETE FROM game_accounts WHERE uid = ?", (uid,))
+            region_id = str(
+                db.execute(
+                    "SELECT region_id FROM game_accounts WHERE uid = ? AND qq_id = ? LIMIT 1",
+                    (uid, qq_id),
+                ).fetchone()["region_id"]
+            )
+            db.execute(
+                "DELETE FROM game_accounts WHERE region_id = ? AND uid = ?",
+                (region_id, uid),
+            )
             replacement = db.execute(
-                "SELECT uid FROM game_accounts WHERE qq_id = ? ORDER BY uid LIMIT 1",
+                "SELECT region_id, uid FROM game_accounts WHERE qq_id = ? "
+                "ORDER BY region_id, uid LIMIT 1",
                 (qq_id,),
             ).fetchone()
             replacement_uid = str(replacement["uid"]) if replacement else None
+            replacement_region_id = str(replacement["region_id"]) if replacement else None
             profile = db.execute(
                 "SELECT profile_id FROM profiles WHERE qq_id = ? AND "
-                "((? IS NULL AND profile_type = 'local') OR uid = ?) LIMIT 1",
-                (qq_id, replacement_uid, replacement_uid),
+                "((? IS NULL AND profile_type = 'local') "
+                "OR (region_id = ? AND uid = ?)) LIMIT 1",
+                (
+                    qq_id,
+                    replacement_uid,
+                    replacement_region_id,
+                    replacement_uid,
+                ),
             ).fetchone()
             db.execute(
-                "UPDATE users SET default_uid = ?, active_profile_id = ?, updated_at = ? "
+                "UPDATE users SET default_region_id = ?, default_uid = ?, "
+                "active_profile_id = ?, updated_at = ? "
                 "WHERE qq_id = ?",
                 (
+                    replacement_region_id,
                     replacement_uid,
                     int(profile["profile_id"]) if profile else None,
                     _iso(),
@@ -180,7 +207,9 @@ class DashboardService:
             self._audit(db, admin, "force_unbind", f"UID {uid}", "success")
             return {
                 "uid": uid,
+                "region_id": region_id,
                 "qq_id": qq_id,
+                "default_region_id": replacement_region_id,
                 "default_uid": replacement_uid,
                 "_profile_ids": [int(row["profile_id"])] if row["profile_id"] else [],
             }

@@ -207,9 +207,19 @@ class LoginSessionService:
         def operation(db: sqlite3.Connection) -> None:
             updated = db.execute(
                 "UPDATE pending_logins SET status = 'selecting', encrypted_pending_tokens = ?, "
-                "available_uids_json = ?, email_identity_hmac = ?, email_masked = ?, "
+                "available_uids_json = ?, available_accounts_json = ?, "
+                "email_identity_hmac = ?, email_masked = ?, "
                 "updated_at = ? WHERE session_id = ? AND expires_at > ?",
-                (encrypted, available, identity_hmac, email_masked, now, session_id, now),
+                (
+                    encrypted,
+                    available,
+                    available,
+                    identity_hmac,
+                    email_masked,
+                    now,
+                    session_id,
+                    now,
+                ),
             ).rowcount
             if updated != 1:
                 raise LoginSessionError("登录会话已过期")
@@ -237,14 +247,26 @@ class LoginSessionService:
             statuses=("selecting",),
         )
         available = self._players_from_json(str(row["available_uids_json"] or "[]"))
-        available_uids = {player.uid for player in available}
+        players_by_uid: dict[str, list[GuidePlayer]] = {}
+        for player in available:
+            players_by_uid.setdefault(player.uid, []).append(player)
         selected = tuple(
             dict.fromkeys(str(uid).strip() for uid in selected_uids if str(uid).strip())
         )
-        if not selected or any(uid not in available_uids for uid in selected):
+        if not selected or any(uid not in players_by_uid for uid in selected):
             raise LoginSessionError("至少选择一个本次账号返回的 UID")
+        if any(len(players_by_uid[uid]) != 1 for uid in selected):
+            raise LoginSessionError("相同 UID 存在于多个区服，请等待登录页区服选择升级")
         if default_uid not in selected:
             raise LoginSessionError("默认 UID 必须位于已选 UID 中")
+        selected_accounts = tuple(
+            {
+                "region_id": players_by_uid[uid][0].region_id,
+                "uid": uid,
+            }
+            for uid in selected
+        )
+        default_region_id = players_by_uid[default_uid][0].region_id
         code = "".join(secrets.choice("0123456789") for _ in range(6))
         expires_at = _now() + timedelta(minutes=self.settings.confirm_ttl_minutes)
         code_hash = self._digest(f"login-confirm:{row['session_id']}:{code}")
@@ -253,11 +275,14 @@ class LoginSessionService:
         def operation(db: sqlite3.Connection) -> None:
             updated = db.execute(
                 "UPDATE pending_logins SET status = 'awaiting_confirm', selected_uids_json = ?, "
-                "selected_default_uid = ?, confirm_code_hash = ?, failed_attempts = 0, "
+                "selected_accounts_json = ?, selected_default_uid = ?, "
+                "selected_default_region_id = ?, confirm_code_hash = ?, failed_attempts = 0, "
                 "expires_at = ?, updated_at = ? WHERE session_id = ? AND status = 'selecting'",
                 (
                     json.dumps(selected, separators=(",", ":")),
+                    json.dumps(selected_accounts, separators=(",", ":")),
                     default_uid,
+                    default_region_id,
                     code_hash,
                     _iso(expires_at),
                     now,
@@ -425,15 +450,33 @@ class LoginSessionService:
             sensitive = json.loads(self.cipher.decrypt_text(str(row["encrypted_pending_tokens"])))
             selected = tuple(json.loads(str(row["selected_uids_json"])))
             available = self._players_from_json(str(row["available_uids_json"]))
+            selected_accounts_raw = json.loads(str(row["selected_accounts_json"] or "[]"))
             device_id = str(sensitive.pop("device_id"))
         except (CryptoError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise LoginSessionError("待确认登录数据损坏，请重新发起登录") from exc
         default_uid = str(row["selected_default_uid"] or "")
-        player_map = {player.uid: player for player in available}
+        default_region_id = str(row["selected_default_region_id"] or "")
+        player_map = {(player.region_id, player.uid): player for player in available}
+        if selected_accounts_raw:
+            selected_accounts = tuple(
+                (str(item["region_id"]), str(item["uid"]))
+                for item in selected_accounts_raw
+                if isinstance(item, dict)
+            )
+        else:
+            # 兼容迁移前已进入确认阶段的登录会话；重复 UID 无法安全推断区服。
+            players_by_uid: dict[str, list[GuidePlayer]] = {}
+            for player in available:
+                players_by_uid.setdefault(player.uid, []).append(player)
+            if any(len(players_by_uid.get(uid, ())) != 1 for uid in selected):
+                raise LoginSessionError("待确认 UID 区服不明确，请重新发起登录")
+            selected_accounts = tuple((players_by_uid[uid][0].region_id, uid) for uid in selected)
+            if default_uid in players_by_uid and len(players_by_uid[default_uid]) == 1:
+                default_region_id = players_by_uid[default_uid][0].region_id
         if (
-            not selected
-            or default_uid not in selected
-            or any(uid not in player_map for uid in selected)
+            not selected_accounts
+            or (default_region_id, default_uid) not in selected_accounts
+            or any(account not in player_map for account in selected_accounts)
         ):
             raise LoginSessionError("待确认 UID 数据无效，请重新发起登录")
         identity_hmac = str(row["email_identity_hmac"] or "")
@@ -444,8 +487,11 @@ class LoginSessionService:
         ).fetchone()
         if credential is not None and str(credential["qq_id"]) != qq_id:
             raise LoginConflictError("该国际服账号或 UID 已绑定，无法重复绑定")
-        for uid in selected:
-            owner = db.execute("SELECT qq_id FROM game_accounts WHERE uid = ?", (uid,)).fetchone()
+        for region_id, uid in selected_accounts:
+            owner = db.execute(
+                "SELECT qq_id FROM game_accounts WHERE region_id = ? AND uid = ?",
+                (region_id, uid),
+            ).fetchone()
             if owner is not None and str(owner["qq_id"]) != qq_id:
                 raise LoginConflictError("该国际服账号或 UID 已绑定，无法重复绑定")
 
@@ -487,27 +533,28 @@ class LoginSessionService:
                 "updated_at = ? WHERE credential_id = ?",
                 (email_masked, encrypted_tokens, encrypted_device, now, now, credential_id),
             )
-        for uid in selected:
-            player = player_map[uid]
+        for region_id, uid in selected_accounts:
+            player = player_map[(region_id, uid)]
             db.execute(
-                "INSERT INTO game_accounts (uid, qq_id, credential_id, region_id, region_name, "
+                "INSERT INTO game_accounts (region_id, uid, qq_id, credential_id, region_name, "
                 "player_name, sync_status) VALUES (?, ?, ?, ?, ?, ?, 'never') "
-                "ON CONFLICT(uid) DO UPDATE SET credential_id = excluded.credential_id, "
-                "region_id = excluded.region_id, region_name = excluded.region_name, "
+                "ON CONFLICT(region_id, uid) DO UPDATE SET "
+                "credential_id = excluded.credential_id, region_name = excluded.region_name, "
                 "player_name = excluded.player_name",
                 (
+                    region_id,
                     uid,
                     qq_id,
                     credential_id,
-                    player.region_id,
                     player.region_name,
                     player.player_name,
                 ),
             )
             db.execute(
-                "INSERT OR IGNORE INTO profiles (qq_id, profile_type, uid, updated_at) "
-                "VALUES (?, 'uid', ?, ?)",
-                (qq_id, uid, now),
+                "INSERT OR IGNORE INTO profiles "
+                "(qq_id, profile_type, region_id, uid, updated_at) "
+                "VALUES (?, 'uid', ?, ?, ?)",
+                (qq_id, region_id, uid, now),
             )
         db.execute(
             "DELETE FROM credentials WHERE qq_id = ? AND NOT EXISTS ("
@@ -516,13 +563,14 @@ class LoginSessionService:
             (qq_id,),
         )
         profile = db.execute(
-            "SELECT profile_id FROM profiles WHERE qq_id = ? AND uid = ?",
-            (qq_id, default_uid),
+            "SELECT profile_id FROM profiles WHERE qq_id = ? AND region_id = ? AND uid = ?",
+            (qq_id, default_region_id, default_uid),
         ).fetchone()
         db.execute(
-            "UPDATE users SET default_uid = ?, active_profile_id = ?, updated_at = ? "
+            "UPDATE users SET default_region_id = ?, default_uid = ?, "
+            "active_profile_id = ?, updated_at = ? "
             "WHERE qq_id = ?",
-            (default_uid, int(profile["profile_id"]), now, qq_id),
+            (default_region_id, default_uid, int(profile["profile_id"]), now, qq_id),
         )
         db.execute("DELETE FROM pending_logins WHERE session_id = ?", (row["session_id"],))
         return LoginConfirmationResult(email_masked, selected, default_uid)
@@ -542,7 +590,7 @@ class LoginSessionService:
 
     @staticmethod
     def _unique_players(players: tuple[GuidePlayer, ...]) -> tuple[GuidePlayer, ...]:
-        return tuple({player.uid: player for player in players}.values())
+        return tuple({(player.region_id, player.uid): player for player in players}.values())
 
     @staticmethod
     def _players_from_json(value: str) -> tuple[GuidePlayer, ...]:

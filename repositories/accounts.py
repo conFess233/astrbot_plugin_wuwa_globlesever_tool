@@ -22,6 +22,7 @@ class AccountError(ValueError):
 @dataclass(frozen=True, slots=True)
 class AccountEntry:
     uid: str
+    region_id: str
     player_name: str | None
     region_name: str
     is_default: bool
@@ -39,6 +40,7 @@ class AccountOverview:
 @dataclass(frozen=True, slots=True)
 class PendingUnbind:
     uid: str
+    region_id: str
     code: str
 
 
@@ -66,7 +68,9 @@ class AccountRepository:
     async def overview(self, qq_id: str) -> AccountOverview:
         def operation(db: sqlite3.Connection) -> AccountOverview:
             user = db.execute(
-                "SELECT default_uid, active_profile_id FROM users WHERE qq_id = ?", (qq_id,)
+                "SELECT default_region_id, default_uid, active_profile_id "
+                "FROM users WHERE qq_id = ?",
+                (qq_id,),
             ).fetchone()
             if user is None:
                 return AccountOverview((), (), True)
@@ -79,15 +83,20 @@ class AccountRepository:
             )
             rows = db.execute(
                 "SELECT g.*, p.profile_id FROM game_accounts g "
-                "JOIN profiles p ON p.uid = g.uid WHERE g.qq_id = ? ORDER BY g.uid",
+                "JOIN profiles p ON p.region_id = g.region_id AND p.uid = g.uid "
+                "WHERE g.qq_id = ? ORDER BY g.region_id, g.uid",
                 (qq_id,),
             ).fetchall()
             accounts = tuple(
                 AccountEntry(
                     uid=str(row["uid"]),
+                    region_id=str(row["region_id"]),
                     player_name=row["player_name"],
                     region_name=str(row["region_name"]),
-                    is_default=str(user["default_uid"] or "") == str(row["uid"]),
+                    is_default=(
+                        str(user["default_region_id"] or "") == str(row["region_id"])
+                        and str(user["default_uid"] or "") == str(row["uid"])
+                    ),
                     is_active=user["active_profile_id"] == row["profile_id"],
                     sync_status=str(row["sync_status"]),
                 )
@@ -119,10 +128,14 @@ class AccountRepository:
                 ).fetchone()
                 label = "本地"
             else:
-                row = db.execute(
-                    "SELECT profile_id FROM profiles WHERE qq_id = ? AND uid = ?",
+                rows = db.execute(
+                    "SELECT profile_id FROM profiles WHERE qq_id = ? AND uid = ? "
+                    "ORDER BY region_id",
                     (qq_id, target),
-                ).fetchone()
+                ).fetchall()
+                if len(rows) > 1:
+                    raise AccountError("该 UID 绑定了多个区服，请通过 /kh 账号 的编号切换")
+                row = rows[0] if rows else None
                 label = target
             if row is None:
                 raise AccountError("未找到你绑定的该 UID")
@@ -143,20 +156,26 @@ class AccountRepository:
         digest = self.cipher.account_identity_hmac(f"action:{action_id}:{code}")
         expires_at = _now() + timedelta(minutes=self.confirm_ttl_minutes)
 
-        def operation(db: sqlite3.Connection) -> None:
-            account = db.execute(
-                "SELECT 1 FROM game_accounts WHERE uid = ? AND qq_id = ?", (uid, qq_id)
-            ).fetchone()
-            if account is None:
+        def operation(db: sqlite3.Connection) -> str:
+            accounts = db.execute(
+                "SELECT region_id FROM game_accounts WHERE uid = ? AND qq_id = ? "
+                "ORDER BY region_id",
+                (uid, qq_id),
+            ).fetchall()
+            if not accounts:
                 raise AccountError("未找到你绑定的该 UID")
-            user = db.execute("SELECT default_uid FROM users WHERE qq_id = ?", (qq_id,)).fetchone()
-            account_count = int(
-                db.execute(
-                    "SELECT COUNT(*) FROM game_accounts WHERE qq_id = ?", (qq_id,)
-                ).fetchone()[0]
-            )
-            if str(user["default_uid"] or "") == uid and account_count > 1:
-                raise AccountError("该 UID 是默认 UID；请先重新登录并选择新的默认 UID")
+            if len(accounts) > 1:
+                active = db.execute(
+                    "SELECT p.region_id FROM users u JOIN profiles p "
+                    "ON p.profile_id = u.active_profile_id "
+                    "WHERE u.qq_id = ? AND p.profile_type = 'uid' AND p.uid = ?",
+                    (qq_id, uid),
+                ).fetchone()
+                if active is None:
+                    raise AccountError("该 UID 绑定了多个区服，请先切换到目标账号后再解绑")
+                region_id = str(active["region_id"])
+            else:
+                region_id = str(accounts[0]["region_id"])
             db.execute(
                 "DELETE FROM pending_actions WHERE qq_id = ? AND action_type = 'uid_unbind' "
                 "AND used_at IS NULL",
@@ -169,15 +188,19 @@ class AccountRepository:
                 (
                     action_id,
                     qq_id,
-                    json.dumps({"uid": uid}, separators=(",", ":")),
+                    json.dumps(
+                        {"region_id": region_id, "uid": uid},
+                        separators=(",", ":"),
+                    ),
                     digest,
                     _iso(expires_at),
                     _iso(),
                 ),
             )
+            return region_id
 
-        await self.database.write(operation)
-        return PendingUnbind(uid, code)
+        region_id = await self.database.write(operation)
+        return PendingUnbind(uid, region_id, code)
 
     async def confirm_unbind(self, qq_id: str, code: str) -> str | None:
         now = _iso()
@@ -198,10 +221,13 @@ class AccountRepository:
                     break
             if matched is None:
                 return None
-            uid = str(json.loads(str(matched["payload_json"]))["uid"])
+            payload = json.loads(str(matched["payload_json"]))
+            uid = str(payload["uid"])
+            region_id = str(payload["region_id"])
             account = db.execute(
-                "SELECT credential_id FROM game_accounts WHERE uid = ? AND qq_id = ?",
-                (uid, qq_id),
+                "SELECT credential_id FROM game_accounts "
+                "WHERE region_id = ? AND uid = ? AND qq_id = ?",
+                (region_id, uid, qq_id),
             ).fetchone()
             if account is None:
                 db.execute(
@@ -209,12 +235,20 @@ class AccountRepository:
                     (now, matched["action_id"]),
                 )
                 return "该 UID 已经解绑", ()
-            profile = db.execute("SELECT profile_id FROM profiles WHERE uid = ?", (uid,)).fetchone()
+            profile = db.execute(
+                "SELECT profile_id FROM profiles WHERE region_id = ? AND uid = ?",
+                (region_id, uid),
+            ).fetchone()
             removed_profile_ids = (int(profile["profile_id"]),) if profile else ()
             credential_id = int(account["credential_id"])
-            db.execute("DELETE FROM game_accounts WHERE uid = ? AND qq_id = ?", (uid, qq_id))
+            db.execute(
+                "DELETE FROM game_accounts WHERE region_id = ? AND uid = ? AND qq_id = ?",
+                (region_id, uid, qq_id),
+            )
             replacement = db.execute(
-                "SELECT uid FROM game_accounts WHERE qq_id = ? ORDER BY uid LIMIT 1", (qq_id,)
+                "SELECT region_id, uid FROM game_accounts WHERE qq_id = ? "
+                "ORDER BY region_id, uid LIMIT 1",
+                (qq_id,),
             ).fetchone()
             if replacement is None:
                 local = db.execute(
@@ -222,17 +256,22 @@ class AccountRepository:
                     (qq_id,),
                 ).fetchone()
                 db.execute(
-                    "UPDATE users SET default_uid = NULL, active_profile_id = ?, updated_at = ? "
+                    "UPDATE users SET default_region_id = NULL, default_uid = NULL, "
+                    "active_profile_id = ?, updated_at = ? "
                     "WHERE qq_id = ?",
                     (int(local["profile_id"]), now, qq_id),
                 )
             else:
                 replacement_uid = str(replacement["uid"])
+                replacement_region_id = str(replacement["region_id"])
                 profile = db.execute(
-                    "SELECT profile_id FROM profiles WHERE uid = ?", (replacement_uid,)
+                    "SELECT profile_id FROM profiles WHERE region_id = ? AND uid = ?",
+                    (replacement_region_id, replacement_uid),
                 ).fetchone()
                 user = db.execute(
-                    "SELECT default_uid, active_profile_id FROM users WHERE qq_id = ?", (qq_id,)
+                    "SELECT default_region_id, default_uid, active_profile_id "
+                    "FROM users WHERE qq_id = ?",
+                    (qq_id,),
                 ).fetchone()
                 deleted_profile_active = (
                     db.execute(
@@ -241,20 +280,23 @@ class AccountRepository:
                     ).fetchone()
                     is None
                 )
-                new_default = (
-                    replacement_uid
-                    if str(user["default_uid"] or "") == uid
-                    else user["default_uid"]
+                removed_was_default = (
+                    str(user["default_region_id"] or "") == region_id
+                    and str(user["default_uid"] or "") == uid
                 )
+                new_default_region = (
+                    replacement_region_id if removed_was_default else user["default_region_id"]
+                )
+                new_default_uid = replacement_uid if removed_was_default else user["default_uid"]
                 new_active = (
                     int(profile["profile_id"])
                     if deleted_profile_active
                     else user["active_profile_id"]
                 )
                 db.execute(
-                    "UPDATE users SET default_uid = ?, active_profile_id = ?, updated_at = ? "
-                    "WHERE qq_id = ?",
-                    (new_default, new_active, now, qq_id),
+                    "UPDATE users SET default_region_id = ?, default_uid = ?, "
+                    "active_profile_id = ?, updated_at = ? WHERE qq_id = ?",
+                    (new_default_region, new_default_uid, new_active, now, qq_id),
                 )
             remains = db.execute(
                 "SELECT 1 FROM game_accounts WHERE credential_id = ? LIMIT 1", (credential_id,)

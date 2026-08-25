@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TypeVar
 
+from ..domain.models import RegionUid
 from ..domain.sync import (
     GuideAuthenticationError,
     GuideAvatar,
@@ -76,20 +77,26 @@ class GuideSyncService:
         self._flights: dict[str, asyncio.Task[SyncResult]] = {}
         self._auto_task: asyncio.Task[None] | None = None
 
-    async def sync(self, qq_id: str, uid: str | None = None) -> SyncResult:
-        context = await self._context(qq_id, uid)
+    async def sync(
+        self,
+        qq_id: str,
+        uid: str | None = None,
+        region_id: str | None = None,
+    ) -> SyncResult:
+        context = await self._context(qq_id, uid, region_id)
+        flight_key = RegionUid(context.region_id, context.uid).cache_key
         async with self._flight_guard:
-            task = self._flights.get(context.uid)
+            task = self._flights.get(flight_key)
             if task is None or task.done():
                 task = asyncio.create_task(self._run(context))
-                self._flights[context.uid] = task
+                self._flights[flight_key] = task
         try:
             return await asyncio.shield(task)
         finally:
             if task.done():
                 async with self._flight_guard:
-                    if self._flights.get(context.uid) is task:
-                        self._flights.pop(context.uid, None)
+                    if self._flights.get(flight_key) is task:
+                        self._flights.pop(flight_key, None)
 
     def start_auto_sync(self) -> None:
         if self.settings.auto_sync_enabled and (self._auto_task is None or self._auto_task.done()):
@@ -124,7 +131,7 @@ class GuideSyncService:
 
     async def _run(self, context: _SyncContext) -> SyncResult:
         async with self._global_gate:
-            await self._mark_attempt(context.uid)
+            await self._mark_attempt(context)
             try:
                 result = await self._fetch_and_normalize(context)
                 return await self._commit(context, *result)
@@ -262,21 +269,46 @@ class GuideSyncService:
                 await asyncio.sleep((0.4 * (2**attempt)) + random.uniform(0, 0.2))
         raise AssertionError("unreachable")
 
-    async def _context(self, qq_id: str, uid: str | None) -> _SyncContext:
+    async def _context(
+        self,
+        qq_id: str,
+        uid: str | None,
+        region_id: str | None,
+    ) -> _SyncContext:
         def operation(db: sqlite3.Connection) -> _SyncContext:
             user = db.execute(
-                "SELECT language, default_uid FROM users WHERE qq_id = ?", (qq_id,)
+                "SELECT language, default_region_id, default_uid, active_profile_id "
+                "FROM users WHERE qq_id = ?",
+                (qq_id,),
             ).fetchone()
             if user is None:
                 raise SyncError("尚未绑定国际服 UID，请先执行 /kh 登录")
-            target = str(uid or user["default_uid"] or "").strip()
-            if not target:
-                raise SyncError("尚未设置默认 UID，请先执行 /kh 登录")
+            active = db.execute(
+                "SELECT region_id, uid FROM profiles WHERE profile_id = ? AND profile_type = 'uid'",
+                (user["active_profile_id"],),
+            ).fetchone()
+            target_uid = str(uid or (active["uid"] if active else "") or "").strip()
+            target_region = str(region_id or "").strip()
+            if not target_uid:
+                raise SyncError("当前活动档案不是国际服 UID，请先执行 /kh 切换")
+            if not target_region and active is not None and str(active["uid"]) == target_uid:
+                target_region = str(active["region_id"])
+            if not target_region and uid is None:
+                target_region = str(user["default_region_id"] or "")
+            if not target_region:
+                matches = db.execute(
+                    "SELECT region_id FROM game_accounts WHERE qq_id = ? AND uid = ? "
+                    "ORDER BY region_id",
+                    (qq_id, target_uid),
+                ).fetchall()
+                if len(matches) > 1:
+                    raise SyncError("该 UID 绑定了多个区服，请先切换到目标账号")
+                target_region = str(matches[0]["region_id"]) if matches else ""
             row = db.execute(
                 "SELECT g.uid, g.region_id, g.credential_id, c.encrypted_tokens "
                 "FROM game_accounts g JOIN credentials c ON c.credential_id = g.credential_id "
-                "WHERE g.qq_id = ? AND g.uid = ?",
-                (qq_id, target),
+                "WHERE g.qq_id = ? AND g.region_id = ? AND g.uid = ?",
+                (qq_id, target_region, target_uid),
             ).fetchone()
             if row is None:
                 raise SyncError("未找到你绑定的该 UID")
@@ -292,10 +324,11 @@ class GuideSyncService:
 
         return await self.database.read(operation)
 
-    async def _mark_attempt(self, uid: str) -> None:
+    async def _mark_attempt(self, context: _SyncContext) -> None:
         await self.database.write(
             lambda db: db.execute(
-                "UPDATE game_accounts SET last_sync_attempt_at = ? WHERE uid = ?", (_iso(), uid)
+                "UPDATE game_accounts SET last_sync_attempt_at = ? WHERE region_id = ? AND uid = ?",
+                (_iso(), context.region_id, context.uid),
             )
         )
 
@@ -305,8 +338,16 @@ class GuideSyncService:
         def operation(db: sqlite3.Connection) -> None:
             db.execute(
                 "UPDATE game_accounts SET sync_status = ?, last_sync_attempt_at = ?, "
-                "last_error_category = ? WHERE uid = ? AND qq_id = ?",
-                (status, now, category, context.uid, context.qq_id),
+                "last_error_category = ? "
+                "WHERE region_id = ? AND uid = ? AND qq_id = ?",
+                (
+                    status,
+                    now,
+                    category,
+                    context.region_id,
+                    context.uid,
+                    context.qq_id,
+                ),
             )
             if status == "needs_login":
                 db.execute(
@@ -333,8 +374,8 @@ class GuideSyncService:
 
         def operation(db: sqlite3.Connection) -> SyncResult:
             profile = db.execute(
-                "SELECT profile_id FROM profiles WHERE qq_id = ? AND uid = ?",
-                (context.qq_id, context.uid),
+                "SELECT profile_id FROM profiles WHERE qq_id = ? AND region_id = ? AND uid = ?",
+                (context.qq_id, context.region_id, context.uid),
             ).fetchone()
             if profile is None:
                 raise SyncError("UID 档案已被解绑")
@@ -353,8 +394,15 @@ class GuideSyncService:
                 self._apply_owned(db, profile_id, character, existing, synced_at)
             db.execute(
                 "UPDATE game_accounts SET sync_status = 'success', last_sync_attempt_at = ?, "
-                "last_sync_success_at = ?, last_error_category = NULL WHERE uid = ? AND qq_id = ?",
-                (synced_at, synced_at, context.uid, context.qq_id),
+                "last_sync_success_at = ?, last_error_category = NULL "
+                "WHERE region_id = ? AND uid = ? AND qq_id = ?",
+                (
+                    synced_at,
+                    synced_at,
+                    context.region_id,
+                    context.uid,
+                    context.qq_id,
+                ),
             )
             db.execute(
                 "UPDATE credentials SET token_status = 'valid', last_success_at = ?, "
@@ -465,17 +513,23 @@ class GuideSyncService:
             due = await self._due_accounts()
             if due:
                 await asyncio.gather(
-                    *(self.sync(qq_id, uid) for qq_id, uid in due), return_exceptions=True
+                    *(self.sync(qq_id, uid, region_id) for qq_id, region_id, uid in due),
+                    return_exceptions=True,
                 )
             await asyncio.sleep(900 + random.uniform(0, 300))
 
-    async def _due_accounts(self) -> tuple[tuple[str, str], ...]:
+    async def _due_accounts(self) -> tuple[tuple[str, str, str], ...]:
         threshold = _iso(_now() - timedelta(hours=self.settings.auto_sync_interval_hours))
         return await self.database.read(
             lambda db: tuple(
-                (str(row["qq_id"]), str(row["uid"]))
+                (
+                    str(row["qq_id"]),
+                    str(row["region_id"]),
+                    str(row["uid"]),
+                )
                 for row in db.execute(
-                    "SELECT qq_id, uid FROM game_accounts WHERE last_sync_success_at IS NULL "
+                    "SELECT qq_id, region_id, uid FROM game_accounts "
+                    "WHERE last_sync_success_at IS NULL "
                     "OR last_sync_success_at < ? ORDER BY COALESCE(last_sync_success_at, '')",
                     (threshold,),
                 ).fetchall()

@@ -16,7 +16,7 @@ from typing import Any
 from ..constants import PLUGIN_NAME, PLUGIN_VERSION, SCHEMA_VERSION
 from ..infrastructure.crypto import CryptoError, TokenCipher
 from ..infrastructure.database import Database
-from ..infrastructure.paths import RuntimePaths
+from ..infrastructure.storage import RuntimePaths
 from .catalog import CharacterCatalog
 from .settings import PluginSettings
 
@@ -106,6 +106,9 @@ class BackupService:
             if restore_credentials and inspection.invalid_credentials:
                 raise BackupError("备份中的加密凭据无法使用当前主密钥解密")
             source_path, temporary_root = await asyncio.to_thread(self._extract_database, archive)
+            source_database = Database(source_path)
+            await source_database.initialize()
+            await source_database.close()
             return await self.database.write(
                 lambda target: self._merge(
                     target,
@@ -391,9 +394,10 @@ class BackupService:
                         )
                 credential_map[int(row["credential_id"])] = destination_id
 
-            for row in source.execute("SELECT * FROM game_accounts ORDER BY uid"):
+            for row in source.execute("SELECT * FROM game_accounts ORDER BY region_id, uid"):
                 existing = target.execute(
-                    "SELECT qq_id FROM game_accounts WHERE uid = ?", (row["uid"],)
+                    "SELECT qq_id FROM game_accounts WHERE region_id = ? AND uid = ?",
+                    (row["region_id"], row["uid"]),
                 ).fetchone()
                 if existing is not None and str(existing["qq_id"]) != str(row["qq_id"]):
                     counts["skipped"] += 1
@@ -427,51 +431,71 @@ class BackupService:
                         "UPDATE game_accounts SET qq_id = ?, credential_id = ?, region_id = ?, "
                         "region_name = ?, player_name = ?, sync_status = ?, "
                         "last_sync_attempt_at = ?, last_sync_success_at = ?, "
-                        "last_error_category = ? WHERE uid = ?",
-                        values,
+                        "last_error_category = ? WHERE region_id = ? AND uid = ?",
+                        (*values[:-1], row["region_id"], row["uid"]),
                     )
 
             for row in source.execute("SELECT * FROM profiles ORDER BY profile_id"):
                 if (
                     row["profile_type"] == "uid"
                     and target.execute(
-                        "SELECT 1 FROM game_accounts WHERE uid = ?", (row["uid"],)
+                        "SELECT 1 FROM game_accounts WHERE region_id = ? AND uid = ?",
+                        (row["region_id"], row["uid"]),
                     ).fetchone()
                     is None
                 ):
                     continue
                 existing = target.execute(
                     "SELECT profile_id FROM profiles WHERE qq_id = ? AND profile_type = ? "
-                    "AND ((uid IS NULL AND ? IS NULL) OR uid = ?)",
-                    (row["qq_id"], row["profile_type"], row["uid"], row["uid"]),
+                    "AND ((uid IS NULL AND ? IS NULL) "
+                    "OR (region_id = ? AND uid = ?))",
+                    (
+                        row["qq_id"],
+                        row["profile_type"],
+                        row["uid"],
+                        row["region_id"],
+                        row["uid"],
+                    ),
                 ).fetchone()
                 if existing is None:
                     cursor = target.execute(
-                        "INSERT INTO profiles (qq_id, profile_type, uid, updated_at) "
-                        "VALUES (?, ?, ?, ?)",
-                        (row["qq_id"], row["profile_type"], row["uid"], _iso()),
+                        "INSERT INTO profiles "
+                        "(qq_id, profile_type, region_id, uid, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (
+                            row["qq_id"],
+                            row["profile_type"],
+                            row["region_id"],
+                            row["uid"],
+                            _iso(),
+                        ),
                     )
                     destination_id = int(cursor.lastrowid)
                 else:
                     destination_id = int(existing["profile_id"])
                 profile_map[int(row["profile_id"])] = destination_id
 
-            for row in source.execute("SELECT qq_id, default_uid, active_profile_id FROM users"):
+            for row in source.execute(
+                "SELECT qq_id, default_region_id, default_uid, active_profile_id FROM users"
+            ):
                 current = target.execute(
-                    "SELECT default_uid, active_profile_id FROM users WHERE qq_id = ?",
+                    "SELECT default_region_id, default_uid, active_profile_id "
+                    "FROM users WHERE qq_id = ?",
                     (row["qq_id"],),
                 ).fetchone()
                 if current is None:
                     continue
+                default_region_id = row["default_region_id"]
                 default_uid = row["default_uid"]
                 if (
                     default_uid
                     and target.execute(
-                        "SELECT 1 FROM game_accounts WHERE uid = ? AND qq_id = ?",
-                        (default_uid, row["qq_id"]),
+                        "SELECT 1 FROM game_accounts WHERE region_id = ? AND uid = ? AND qq_id = ?",
+                        (default_region_id, default_uid, row["qq_id"]),
                     ).fetchone()
                     is None
                 ):
+                    default_region_id = None
                     default_uid = None
                 active_profile_id = (
                     profile_map.get(int(row["active_profile_id"]))
@@ -480,9 +504,16 @@ class BackupService:
                 )
                 if mode == "overwrite" or current["default_uid"] is None:
                     target.execute(
-                        "UPDATE users SET default_uid = ?, active_profile_id = ?, "
+                        "UPDATE users SET default_region_id = ?, default_uid = ?, "
+                        "active_profile_id = ?, "
                         "updated_at = ? WHERE qq_id = ?",
-                        (default_uid, active_profile_id, _iso(), row["qq_id"]),
+                        (
+                            default_region_id,
+                            default_uid,
+                            active_profile_id,
+                            _iso(),
+                            row["qq_id"],
+                        ),
                     )
 
             source_tables = {
@@ -504,15 +535,18 @@ class BackupService:
                 updates = ", ".join(
                     f"{column} = excluded.{column}"
                     for column in snapshot_columns
-                    if column != "uid"
+                    if column not in {"region_id", "uid"}
                 )
                 for row in source.execute(
                     "SELECT player_snapshots.*, game_accounts.qq_id AS source_qq_id "
                     "FROM player_snapshots "
-                    "JOIN game_accounts ON game_accounts.uid = player_snapshots.uid"
+                    "JOIN game_accounts "
+                    "ON game_accounts.region_id = player_snapshots.region_id "
+                    "AND game_accounts.uid = player_snapshots.uid"
                 ):
                     destination = target.execute(
-                        "SELECT qq_id FROM game_accounts WHERE uid = ?", (row["uid"],)
+                        "SELECT qq_id FROM game_accounts WHERE region_id = ? AND uid = ?",
+                        (row["region_id"], row["uid"]),
                     ).fetchone()
                     if destination is None or str(destination["qq_id"]) != str(row["source_qq_id"]):
                         counts["skipped"] += 1
@@ -521,7 +555,8 @@ class BackupService:
                     if mode == "overwrite":
                         target.execute(
                             f"INSERT INTO player_snapshots ({insert_columns}) "
-                            f"VALUES ({placeholders}) ON CONFLICT(uid) DO UPDATE SET {updates}",
+                            f"VALUES ({placeholders}) "
+                            f"ON CONFLICT(region_id, uid) DO UPDATE SET {updates}",
                             values,
                         )
                         counts["snapshots"] += 1

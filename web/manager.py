@@ -9,7 +9,7 @@ from astrbot.api.web import error_response, file_response, json_response, reques
 from ..constants import PLUGIN_NAME, PLUGIN_VERSION
 from ..infrastructure.database import Database
 from ..infrastructure.http import HttpClient
-from ..infrastructure.paths import RuntimePaths
+from ..infrastructure.storage import RuntimePaths
 from ..services.login_sessions import LoginSessionError, LoginSessionService
 from ..services.settings import PluginSettings
 
