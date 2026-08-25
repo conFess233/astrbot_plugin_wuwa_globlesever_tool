@@ -16,7 +16,7 @@ from ...domain.sync import (
     GuideSyncPlayer,
     GuideUnavailableError,
 )
-from ...infrastructure.network import HttpClient
+from ...infrastructure.network import HttpClient, ResponseTooLargeError, read_limited_response
 from .._guide_http import guide_headers, is_json_response
 
 _BASES = ("https://guide-server.aki-game.net", "https://guide-server-1.aki-game.net")
@@ -43,6 +43,8 @@ class GlobalGuideClient:
     async def players(self, token: str, language: str) -> tuple[GuideSyncPlayer, ...]:
         payload = await self._request("GET", "/user/player/list", language, token=token)
         data = payload.get("data")
+        if data is None:
+            return ()
         if not isinstance(data, list):
             raise GuideError("攻略站玩家列表格式无效")
         result = []
@@ -93,9 +95,12 @@ class GlobalGuideClient:
         query = urlencode({"roleGbId": role_id})
         payload = await self._request("GET", f"/introduction/list?{query}", language, token=token)
         data = payload.get("data")
+        if data is None:
+            return ()
         if not isinstance(data, list):
             raise GuideError("攻略站角色攻略列表格式无效")
         result = []
+        seen_ids: set[int] = set()
         for item in data:
             if not isinstance(item, dict):
                 continue
@@ -103,6 +108,9 @@ class GlobalGuideClient:
                 introduction_id = int(item.get("id"))
             except (TypeError, ValueError):
                 continue
+            if introduction_id in seen_ids:
+                continue
+            seen_ids.add(introduction_id)
             texts = item.get("texts") if isinstance(item.get("texts"), list) else []
             languages = tuple(
                 str(text.get("language"))
@@ -181,6 +189,8 @@ class GlobalGuideClient:
         if session is None or session.closed:
             raise GuideUnavailableError("HTTP 客户端尚未初始化")
         headers = guide_headers(language, token)
+        if body is not None:
+            headers["Content-Type"] = "application/json;charset=UTF-8"
         last_error: Exception | None = None
         for index, base in enumerate(_BASES):
             try:
@@ -200,9 +210,10 @@ class GlobalGuideClient:
                         continue
                     if response.status != 200:
                         raise GuideUnavailableError("攻略站请求失败，请稍后重试")
-                    content = await response.read()
-                    if len(content) > _MAX_RESPONSE_BYTES:
-                        raise GuideError("攻略站响应超过安全大小限制")
+                    try:
+                        content = await read_limited_response(response, _MAX_RESPONSE_BYTES)
+                    except ResponseTooLargeError as exc:
+                        raise GuideError("攻略站响应超过安全大小限制") from exc
                     try:
                         payload = json.loads(content)
                     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -210,10 +221,11 @@ class GlobalGuideClient:
                     if not isinstance(payload, dict):
                         raise GuideError("攻略站响应格式无效")
                     code = self._integer(payload.get("code"))
-                    if code in {401, 403, 1000}:
+                    if code in {401, 403}:
                         raise GuideAuthenticationError("攻略站登录状态失效，请重新登录")
                     if code != 200:
-                        raise GuideError("攻略站拒绝了同步请求")
+                        endpoint = path.partition("?")[0]
+                        raise GuideError(f"攻略站接口 {endpoint} 返回错误代码 {code}")
                     return payload
             except GuideAuthenticationError:
                 raise

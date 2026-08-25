@@ -552,7 +552,11 @@ class DashboardService:
 
 
 def _catalog_snapshot(payload: object) -> dict[str, object]:
-    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+    if (
+        not isinstance(payload, dict)
+        or str(payload.get("code") or "").strip() != "200"
+        or not isinstance(payload.get("data"), list)
+    ):
         raise DashboardError("攻略站角色目录格式无效")
     characters = []
     languages = {"zh-Hans": "zh-CN", "zh-Hant": "zh-TW", "en": "en", "ja": "ja", "ko": "ko"}

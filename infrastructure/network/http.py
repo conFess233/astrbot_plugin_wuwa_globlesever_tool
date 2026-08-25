@@ -1,11 +1,36 @@
 """供外部集成共享的异步 HTTP Client。"""
 
 import json
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
+
+
+class ResponseTooLargeError(ValueError):
+    """表示解压后的 HTTP 响应超过调用方设置的安全上限。"""
+
+
+async def read_limited_response(
+    response: aiohttp.ClientResponse,
+    max_bytes: int,
+) -> bytes:
+    """流式读取响应，避免先无界分配内存再检查大小。"""
+
+    if max_bytes <= 0:
+        raise ValueError("响应大小上限必须大于零")
+    length = response.content_length
+    if length is not None and length > max_bytes:
+        raise ResponseTooLargeError("响应超过安全大小限制")
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in response.content.iter_chunked(64 * 1024):
+        size += len(chunk)
+        if size > max_bytes:
+            raise ResponseTooLargeError("响应超过安全大小限制")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 class HttpClient:
@@ -37,26 +62,20 @@ class HttpClient:
         *,
         allowed_hosts: Collection[str],
         max_bytes: int,
+        headers: Mapping[str, str] | None = None,
     ) -> bytes:
         parsed = urlparse(url)
         if parsed.scheme != "https" or parsed.hostname not in allowed_hosts:
             raise ValueError("资源地址不受信任")
         if self.session is None or self.session.closed:
             raise RuntimeError("HTTP Client 尚未初始化")
-        async with self.session.get(url) as response:
+        async with self.session.get(url, headers=headers) as response:
             if response.status != 200:
                 raise ValueError(f"资源请求失败：HTTP {response.status}")
-            length = response.content_length
-            if length is not None and length > max_bytes:
-                raise ValueError("资源文件过大")
-            chunks: list[bytes] = []
-            size = 0
-            async for chunk in response.content.iter_chunked(64 * 1024):
-                size += len(chunk)
-                if size > max_bytes:
-                    raise ValueError("资源文件过大")
-                chunks.append(chunk)
-            return b"".join(chunks)
+            try:
+                return await read_limited_response(response, max_bytes)
+            except ResponseTooLargeError as exc:
+                raise ValueError("资源文件过大") from exc
 
     async def get_json(
         self,
@@ -64,11 +83,13 @@ class HttpClient:
         *,
         allowed_hosts: Collection[str],
         max_bytes: int,
+        headers: Mapping[str, str] | None = None,
     ) -> Any:
         data = await self.get_bytes(
             url,
             allowed_hosts=allowed_hosts,
             max_bytes=max_bytes,
+            headers=headers,
         )
         try:
             return json.loads(data.decode("utf-8"))
@@ -82,18 +103,19 @@ class HttpClient:
         *,
         allowed_hosts: Collection[str],
         max_bytes: int,
+        headers: Mapping[str, str] | None = None,
     ) -> Any:
         parsed = urlparse(url)
         if parsed.scheme != "https" or parsed.hostname not in allowed_hosts:
             raise ValueError("接口地址不受信任")
         if self.session is None or self.session.closed:
             raise RuntimeError("HTTP Client 尚未初始化")
-        async with self.session.post(url, json=body) as response:
+        request_headers = dict(headers or {})
+        request_headers.setdefault("Content-Type", "application/json; charset=utf-8")
+        async with self.session.post(url, json=body, headers=request_headers) as response:
             if response.status != 200:
                 raise ValueError(f"接口请求失败：HTTP {response.status}")
-            data = await response.read()
-            if len(data) > max_bytes:
-                raise ValueError("接口响应超过安全大小限制")
+            data = await read_limited_response(response, max_bytes)
             try:
                 return json.loads(data.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:

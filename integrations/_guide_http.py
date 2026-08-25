@@ -11,12 +11,18 @@ GUIDE_USER_AGENT = (
 )
 
 
-def guide_headers(language: str, token: str | None = None) -> dict[str, str]:
-    headers = {
+def kuro_headers(language: str = "zh-Hans") -> dict[str, str]:
+    """返回与 WwTool/国际服启动器一致的通用请求头。"""
+
+    return {
         "User-Agent": GUIDE_USER_AGENT,
-        "x-language": language,
         "Accept-Language": language,
     }
+
+
+def guide_headers(language: str, token: str | None = None) -> dict[str, str]:
+    headers = kuro_headers(language)
+    headers["x-language"] = language
     if token:
         headers["x-token"] = token
     return headers
