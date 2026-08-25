@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 640" role="img" aria-label="角色占位">
+  <!-- 本地兜底资源，不包含游戏素材。 -->
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#374149"/><stop offset="1" stop-color="#171d22"/></linearGradient></defs>
+  <rect width="480" height="640" rx="34" fill="url(#g)"/>
+  <circle cx="240" cy="220" r="92" fill="#83929b" opacity=".34"/>
+  <path d="M88 574c18-140 72-220 152-220s134 80 152 220" fill="#83929b" opacity=".34"/>
+  <path d="M176 95l64-38 64 38-14 72h-100z" fill="none" stroke="#d1b77f" stroke-width="8" opacity=".7"/>
+</svg>

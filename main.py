@@ -9,36 +9,36 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
 
-from .clients.auth import GlobalAuthClient
-from .clients.guide import GlobalGuideClient
-from .commands.event_adapter import mentioned_users, plain_text
-from .commands.parser import CommandName, CommandParseError, CommandParser
+from .application.admin.dashboard import DashboardService
+from .application.admin.export import BackupService
+from .application.cards import CardService
+from .application.commands import CommandService, CommandServiceError
+from .application.login import LoginSessionError, LoginSessionService
+from .application.refresh import GuideSyncService, PlayerDataService, SyncError
+from .application.settings import PluginSettings
 from .constants import PLUGIN_DISPLAY_NAME, PLUGIN_NAME, PLUGIN_VERSION
 from .domain.cards import CardMessage
+from .domain.catalog import CatalogError, CharacterCatalog
 from .domain.login import LoginCompletionResult, LoginLinkMessage
 from .domain.player import PlayerDataError
-from .infrastructure.card_cache import remove_all_cards
-from .infrastructure.crypto import MasterKeyProvider, TokenCipher
 from .infrastructure.database import Database
-from .infrastructure.http import HttpClient
-from .infrastructure.network import SafeHttpDownloader
-from .infrastructure.storage import RuntimePaths
+from .infrastructure.database.repositories import (
+    AccountError,
+    AccountRepository,
+    LocalDataError,
+    LocalDataRepository,
+)
+from .infrastructure.network import HttpClient, SafeHttpDownloader
+from .infrastructure.security import MasterKeyProvider, TokenCipher
+from .infrastructure.storage import RuntimePaths, remove_all_cards
+from .integrations.astrbot import mentioned_users, plain_text
+from .integrations.guide import GlobalGuideClient
+from .integrations.kuro import GlobalAuthClient
 from .presentation.cards import AstrBotCardRenderer, CardAssetPreparer, CardPreviewService
+from .presentation.commands import CommandName, CommandParseError, CommandParser
 from .presentation.resources import FontManager, ResourceManager, UiAssetManifest
-from .repositories.accounts import AccountError, AccountRepository
-from .repositories.local_data import LocalDataError, LocalDataRepository
-from .services.backups import BackupService
-from .services.cards import CardService
-from .services.catalog import CatalogError, CharacterCatalog
-from .services.command_service import CommandService, CommandServiceError
-from .services.dashboard import DashboardService
-from .services.login_sessions import LoginSessionError, LoginSessionService
-from .services.player_data import PlayerDataService
-from .services.settings import PluginSettings
-from .services.sync import GuideSyncService, SyncError
-from .web.dashboard import DashboardWebManager
-from .web.manager import WebManager
-from .web.public_login import PublicLoginServer, PublicLoginServerError
+from .web.dashboard import DashboardWebManager, WebManager
+from .web.login import PublicLoginServer, PublicLoginServerError
 
 _HANDLED_EVENT_KEY = "wuwa_global_server_tool_handled"
 
@@ -106,7 +106,7 @@ class WuWaGlobalServerPlugin(Star):
                 "dashboard/accounts/unbind",
                 self.dashboard_web.force_unbind,
                 ["POST"],
-                "强制解绑 UID",
+                "按区服和 UID 强制解绑账号",
             ),
             (
                 "dashboard/users/delete",

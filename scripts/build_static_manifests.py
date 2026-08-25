@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CHARACTERS_PATH = ROOT / "assets" / "static" / "characters.json"
+CHARACTERS_PATH = ROOT / "static" / "data" / "characters.json"
 STATIC_DATA = ROOT / "static" / "data"
 
 
@@ -57,15 +57,15 @@ def main() -> None:
             "local_placeholder",
         ],
         "placeholders": {
-            "avatar": "../images/placeholders/avatar.svg",
-            "character": "../images/placeholders/character.svg",
-            "weapon": "../images/placeholders/weapon.svg",
-            "element": "../images/placeholders/element.svg",
+            "avatar": "../ui/placeholders/avatar.svg",
+            "character": "../ui/placeholders/character.svg",
+            "weapon": "../ui/placeholders/weapon.svg",
+            "element": "../ui/placeholders/element.svg",
         },
         "ui": {
-            "brand_mark": "../images/icons/brand-mark.svg",
-            "star": "../images/icons/star.svg",
-            "background_texture": "../images/textures/card-grain.svg",
+            "brand_mark": "../ui/icons/brand-mark.svg",
+            "star": "../ui/icons/star.svg",
+            "background_texture": "../ui/textures/card-grain.svg",
         },
         "elements": sorted(elements_by_id.values(), key=lambda item: int(item["id"])),
         "characters": manifest_characters,
@@ -80,7 +80,7 @@ def main() -> None:
                 "weaponTypeId",
                 "weaponTypePictureUrl",
             ],
-            "placeholder": "../images/placeholders/weapon.svg",
+            "placeholder": "../ui/placeholders/weapon.svg",
         },
     }
     alias_payload = {

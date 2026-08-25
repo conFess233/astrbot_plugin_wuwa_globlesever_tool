@@ -1,5 +1,6 @@
-"""受限网络访问基础设施。"""
+"""共享 HTTP 与受限下载基础设施。"""
 
+from .http import HttpClient
 from .safe_downloader import (
     DownloadedResource,
     DownloadPolicy,
@@ -11,6 +12,7 @@ from .safe_downloader import (
 __all__ = [
     "DownloadPolicy",
     "DownloadedResource",
+    "HttpClient",
     "SafeHttpDownloader",
     "UnsafeUrlError",
     "validate_public_url",

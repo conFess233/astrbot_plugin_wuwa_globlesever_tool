@@ -3,7 +3,7 @@
   "snapshot_date": "2026-08-21",
   "sources": [
     {
-      "name": "Wuthering Waves Guide role avatar list",
+      "name": "Wuthering Waves Guide public role avatar list",
       "url": "https://guide-server.aki-game.net/role/avatar/list",
       "scope": "character-and-element-metadata"
     }
@@ -16,15 +16,15 @@
     "local_placeholder"
   ],
   "placeholders": {
-    "avatar": "../images/placeholders/avatar.svg",
-    "character": "../images/placeholders/character.svg",
-    "weapon": "../images/placeholders/weapon.svg",
-    "element": "../images/placeholders/element.svg"
+    "avatar": "../ui/placeholders/avatar.svg",
+    "character": "../ui/placeholders/character.svg",
+    "weapon": "../ui/placeholders/weapon.svg",
+    "element": "../ui/placeholders/element.svg"
   },
   "ui": {
-    "brand_mark": "../images/icons/brand-mark.svg",
-    "star": "../images/icons/star.svg",
-    "background_texture": "../images/textures/card-grain.svg"
+    "brand_mark": "../ui/icons/brand-mark.svg",
+    "star": "../ui/icons/star.svg",
+    "background_texture": "../ui/textures/card-grain.svg"
   },
   "elements": [
     {
@@ -863,6 +863,6 @@
       "weaponTypeId",
       "weaponTypePictureUrl"
     ],
-    "placeholder": "../images/placeholders/weapon.svg"
+    "placeholder": "../ui/placeholders/weapon.svg"
   }
 }
