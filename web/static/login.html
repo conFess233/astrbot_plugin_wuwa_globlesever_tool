@@ -228,6 +228,7 @@
         <div class="done-mark">✓</div>
         <h2>绑定完成</h2>
         <p class="lead">Bot 正在原 QQ 会话发送结果并刷新默认账号数据。现在可以安全关闭此页面。</p>
+        <p class="lead" id="done-detail"></p>
       </section>
 
       <p id="status" class="status" role="status" aria-live="polite"></p>
@@ -281,11 +282,22 @@
     showStage("login");
   }
 
+  function showDone(data) {
+    const count = Number(data.selected_count || 0);
+    const detail = data.default_account
+      ? `已绑定 ${count} 个账号，默认 UID ${data.default_account.uid}`
+      : "绑定完成";
+    $("done-detail").textContent = detail;
+    $("password").value = "";
+    showStage("done");
+    setStatus(data.notice || "绑定成功", data.notice ? "" : "success");
+  }
+
   async function submitCredentials(event, geetest = null) {
     if (event) event.preventDefault();
     const button = $("login-button");
     setBusy(button, true);
-    setStatus("正在登录并读取区服账号…");
+    setStatus("正在登录并校验账号，请稍候…");
     try {
       const data = await post(geetest ? "captcha" : "login", {
         email: $("email").value,
@@ -298,10 +310,14 @@
         return;
       }
       $("password").value = "";
+      if (data.status === "completed") {
+        showDone(data);
+        return;
+      }
       state.players = Array.isArray(data.players) ? data.players : [];
       renderPlayers(data.email_masked);
       showStage("select");
-      setStatus("");
+      setStatus(data.notice || "请选择要绑定的账号。");
     } catch (error) {
       setStatus(error.message, "error");
     } finally {
@@ -373,12 +389,11 @@
       const selectedAccounts = indexes.map((index) => ({ region_id: state.players[index].region_id, uid: state.players[index].uid }));
       const defaultPlayer = defaultInput ? state.players[Number(defaultInput.value)] : null;
       if (!defaultPlayer) throw new Error("请选择默认账号");
-      await post("complete", {
+      const data = await post("complete", {
         selected_accounts: selectedAccounts,
         default_account: { region_id: defaultPlayer.region_id, uid: defaultPlayer.uid },
       });
-      showStage("done");
-      setStatus("绑定成功", "success");
+      showDone(data);
     } catch (error) {
       setStatus(error.message, "error");
       setBusy(button, false);

@@ -155,6 +155,18 @@
     "default": 15,
     "hint": "范围 1 到 120。"
   },
+  "login_auto_retry_count": {
+    "description": "登录自动尝试总次数",
+    "type": "int",
+    "default": 3,
+    "hint": "范围 1 到 5，包含首次请求；仅重试官方登录及登录后校验失败，最终失败计数一次。验证码仍需用户完成。"
+  },
+  "login_auto_bind_all": {
+    "description": "登录后自动绑定全部账号",
+    "type": "bool",
+    "default": true,
+    "hint": "成功后绑定返回的全部区服账号，以首个为默认；关闭后手动选择。发生绑定冲突时返回选择页。"
+  },
   "auto_sync_enabled": {
     "description": "启用后台自动同步",
     "type": "bool",

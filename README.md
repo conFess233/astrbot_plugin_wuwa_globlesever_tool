@@ -4,7 +4,7 @@
 
 面向 AstrBot 的鸣潮国际服账号绑定、数据刷新、本地档案与统一图片卡插件
 
-[![Version](https://img.shields.io/badge/version-0.6.0-c8a96a)](CHANGELOG.md)
+[![Version 0.6.1](https://img.shields.io/badge/version-0.6.1-c8a96a)](CHANGELOG.md)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.24.2%20%3C5-6f42c1)](https://github.com/AstrBotDevs/AstrBot)
 [![Platform](https://img.shields.io/badge/OneBot_11-QQ-12b7f5)](https://github.com/botuniverse/onebot-11)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green)](LICENSE)
@@ -86,11 +86,13 @@ curl.exe -i "https://你的登录域名/health"
 
 1. 在群内发送 `/kh 登录`。
 2. 打开 Bot 返回的临时 HTTPS 链接，输入国际服邮箱和密码。
-3. 勾选要绑定的区服账号，并选择默认账号。
+3. 默认自动绑定返回的全部区服账号，以首个为默认。关闭 `login_auto_bind_all` 后可手动选择账号与默认账号；绑定冲突时也会返回选择页。
 4. 网页完成后等待 Bot 在原会话提示登录成功。
 5. 发送 `/kh 刷新` 获取角色数据；账号信息、日常和探索会按全局配置刷新或读取缓存。
 
 登录消息仅发送一条合并转发，内容包含简短提示、过期时间和链接。链接短时有效且仅可使用一次；可通过 `/kh 取消登录` 立即作废。
+
+官方登录或登录后校验失败时，插件默认自动尝试最多 3 次（包含首次），全部失败后才显示错误并记录一次失败。参数、会话和限流错误不重试；需要人机验证时，完成验证后自动继续登录。
 
 登录成功后，插件会加密保存 SDK 返回的 `autoToken` 和设备 ID，仅在游戏 OAuth 或攻略站访问令牌失效时用于免密续期；不会保存邮箱密码。`autoToken` 本身失效后仍需重新执行 `/kh 登录`。
 
@@ -188,6 +190,8 @@ curl.exe -i "https://你的登录域名/health"
 | `public_https_base_url`                                           | 空                   | 登录页 HTTPS 根地址；留空禁用网页登录  |
 | `login_server_host` / `login_server_port`                         | `127.0.0.1` / `6199` | 独立登录监听地址和端口                 |
 | `login_link_ttl_minutes`                                          | `3`                  | 登录链接有效期，允许 1–60 分钟         |
+| `login_auto_retry_count`                                          | `3`                  | 登录自动尝试总次数，包含首次，允许 1–5 |
+| `login_auto_bind_all`                                             | `true`               | 自动绑定全部账号；关闭后手动选择       |
 | `allow_query_others`                                              | `false`              | 全局控制是否允许查询其他 QQ 的公开缓存 |
 | `query_refresh_enabled`                                           | `true`               | 账号信息、日常、探索查询前自动刷新     |
 | `player_refresh_cooldown_seconds`                                 | `60`                 | 玩家快照共用冷却                       |

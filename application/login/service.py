@@ -1,5 +1,6 @@
 """短期网页登录会话、复合账号绑定与登录限流。"""
 
+import asyncio
 import hmac
 import json
 import re
@@ -12,6 +13,7 @@ from urllib.parse import quote
 from ...constants import PUBLIC_LOGIN_PREFIX
 from ...domain.login import (
     AuthClient,
+    AuthenticatedAccount,
     AuthenticationError,
     AuthenticationUnavailableError,
     BrowserLoginState,
@@ -30,6 +32,7 @@ _EMAIL = re.compile(r"^[^\s@]{1,128}@[^\s@]{1,190}$")
 _GEETEST_KEYS = {"captcha_output", "gen_time", "lot_number", "pass_token"}
 _ACTIVE_STATUSES = ("active", "risk", "selecting")
 _MAX_RATE_IDENTITIES = 10_000
+_RETRY_DELAY_SECONDS = 0.5
 _RateIdentity = tuple[str, str, int]
 
 
@@ -205,6 +208,51 @@ class LoginSessionService:
             players=players,
         )
 
+    async def composite_login(
+        self,
+        session_token: str,
+        csrf_token: str,
+        email: str,
+        password: str,
+        origin: str,
+        client_ip: str,
+        geetest: dict[str, str] | None = None,
+        *,
+        endpoint: str = "login",
+    ) -> LoginSubmitResult:
+        """提交登录，成功后按配置自动完成账号绑定。"""
+        result = await self.submit_credentials(
+            session_token,
+            csrf_token,
+            email,
+            password,
+            origin,
+            client_ip,
+            geetest,
+            endpoint=endpoint,
+        )
+        if result.risk_required:
+            # 人机验证由官方要求，先让页面完成验证，验证后再次提交会自动继续。
+            return result
+        if not self.settings.login_auto_bind_all or not result.players:
+            return result
+        try:
+            completed = await self.auto_complete(session_token, csrf_token, origin)
+        except LoginConflictError as exc:
+            # 存在已绑定账号时回退到手动选择，由用户剔除冲突项。
+            return LoginSubmitResult(
+                False,
+                players=result.players,
+                email_masked=result.email_masked,
+                notice=str(exc),
+            )
+        return LoginSubmitResult(
+            False,
+            players=result.players,
+            email_masked=result.email_masked,
+            completed=completed,
+        )
+
     async def submit_credentials(
         self,
         session_token: str,
@@ -252,28 +300,56 @@ class LoginSessionService:
         except (CryptoError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise LoginSessionError("登录会话状态损坏，请重新发起登录") from exc
 
-        try:
-            sdk_result = await self.auth.email_login(
-                normalized_email,
-                password,
-                device_id,
-                geetest or None,
-            )
-            if sdk_result.risk_required:
-                captcha_id = sdk_result.challenge.captcha_id if sdk_result.challenge else None
-                await self._set_status(session_id, "risk")
-                return LoginSubmitResult(True, captcha_id=captcha_id)
-            account = await self.auth.complete_login(sdk_result, device_id)
-        except AuthenticationUnavailableError as exc:
-            raise LoginSessionError(str(exc)) from exc
-        except AuthenticationError as exc:
-            await self._record_failure(session_id, identities)
-            raise LoginSessionError(str(exc)) from exc
+        attempts = self.settings.login_auto_retry_count
+        for attempt in range(attempts):
+            if attempt:
+                await asyncio.sleep(_RETRY_DELAY_SECONDS)
+                # 等待期间取消、过期或限流后，不再向官方提交凭据。
+                row = await self._active_session(
+                    session_token, csrf_token, origin, statuses=("active", "risk")
+                )
+                await self._check_rate_limits(row, identities)
+            try:
+                sdk_result = await self.auth.email_login(
+                    normalized_email,
+                    password,
+                    device_id,
+                    geetest or None,
+                )
+                if sdk_result.risk_required:
+                    captcha_id = sdk_result.challenge.captcha_id if sdk_result.challenge else None
+                    await self._set_status(session_id, "risk")
+                    return LoginSubmitResult(True, captcha_id=captcha_id)
+                account = await self.auth.complete_login(sdk_result, device_id)
+                break
+            except AuthenticationError as exc:
+                if attempt + 1 < attempts:
+                    continue
+                if not isinstance(exc, AuthenticationUnavailableError):
+                    await self._record_failure(session_id, identities)
+                raise LoginSessionError(str(exc)) from exc
 
         players = self._unique_players(account.players)
         if not players:
             await self._record_failure(session_id, identities)
             raise LoginSessionError("该账号没有可绑定的国际服 UID")
+        email_masked = await self._finalize_login(
+            session_id,
+            normalized_email,
+            account,
+            players,
+        )
+        await self._clear_rate_limits(identities)
+        return LoginSubmitResult(False, players=players, email_masked=email_masked)
+
+    async def _finalize_login(
+        self,
+        session_id: str,
+        normalized_email: str,
+        account: AuthenticatedAccount,
+        players: tuple[GuidePlayer, ...],
+    ) -> str:
+        """把已确认的登录结果写入待选状态，返回脱敏邮箱。"""
         sensitive = account.sensitive_payload()
         sensitive["device_id"] = account.device_id
         encrypted = self.cipher.encrypt_text(json.dumps(sensitive, separators=(",", ":")))
@@ -304,8 +380,7 @@ class LoginSessionService:
                 raise LoginSessionError("登录会话已过期")
 
         await self.database.write(operation)
-        await self._clear_rate_limits(identities)
-        return LoginSubmitResult(False, players=players, email_masked=email_masked)
+        return email_masked
 
     async def complete_accounts(
         self,
@@ -333,6 +408,57 @@ class LoginSessionService:
             raise LoginSessionError("默认账号必须位于已选账号中")
         if any((account.region_id, account.uid) not in player_map for account in selected):
             raise LoginSessionError("只能选择本次登录返回的游戏账号")
+        return await self._binding_operation(
+            session_token,
+            csrf_token,
+            selected,
+            default,
+            player_map,
+        )
+
+    async def auto_complete(
+        self,
+        session_token: str,
+        csrf_token: str,
+        origin: str,
+    ) -> LoginCompletionResult:
+        """无需用户二次确认：绑定本次登录返回的全部账号，首个为默认账号。"""
+        row = await self._active_session(
+            session_token,
+            csrf_token,
+            origin,
+            statuses=("selecting",),
+        )
+        player_map = self._available_player_map(row)
+        selected = tuple(
+            dict.fromkeys(RegionUid(player.region_id, player.uid) for player in player_map.values())
+        )
+        if not selected:
+            raise LoginSessionError("该账号没有可绑定的国际服 UID")
+        return await self._binding_operation(
+            session_token,
+            csrf_token,
+            selected,
+            selected[0],
+            player_map,
+        )
+
+    @staticmethod
+    def _available_player_map(row: sqlite3.Row) -> dict[tuple[str, str], GuidePlayer]:
+        """按区服与 UID 去重本次登录返回的游戏账号。"""
+        available = LoginSessionService._players_from_json(
+            str(row["available_accounts_json"] or row["available_uids_json"] or "[]")
+        )
+        return {(player.region_id, player.uid): player for player in available}
+
+    async def _binding_operation(
+        self,
+        session_token: str,
+        csrf_token: str,
+        selected: tuple[RegionUid, ...],
+        default: RegionUid,
+        player_map: dict[tuple[str, str], GuidePlayer],
+    ) -> LoginCompletionResult:
         session_hash = self._digest(f"login-session:{session_token}")
         csrf_hash = self._digest(f"login-csrf:{csrf_token}")
         now = _iso()

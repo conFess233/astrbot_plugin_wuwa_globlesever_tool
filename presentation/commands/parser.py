@@ -58,7 +58,7 @@ class CommandParser:
 
     def update_settings(self, settings: PluginSettings) -> None:
         self.settings = settings
-        self.roots = ("/kh", *settings.extra_command_roots)
+        self.roots = tuple(sorted(("/kh", *settings.extra_command_roots), key=len, reverse=True))
         groups = (
             (settings.keyword_help, CommandName.HELP, False),
             (settings.keyword_cancel_login, CommandName.CANCEL_LOGIN, False),
@@ -84,27 +84,28 @@ class CommandParser:
         )
 
     def parse(self, plain_text: str, mentioned_users: list[str]) -> ParsedCommand | None:
+        """先识别完整命令，再校验查询对象；普通聊天不拦截。"""
         text = _SPACE.sub(" ", plain_text.strip())
         if not text:
             return None
-        if len(mentioned_users) > 1:
-            raise CommandParseError("一次只能指定一个查询对象")
-
         formal_tail = self._formal_tail(text)
-        if formal_tail is not None:
-            command = self._parse_formal(formal_tail)
-        else:
-            command = self._parse_keyword(text)
+        command = (
+            self._parse_formal(formal_tail)
+            if formal_tail is not None
+            else self._parse_keyword(text)
+        )
         if command is None:
             return None
-
-        target = mentioned_users[0] if mentioned_users else None
+        targets = list(dict.fromkeys(mentioned_users))
+        if len(targets) > 1:
+            raise CommandParseError("一次只能指定一个查询对象")
+        target = targets[0] if targets else None
         if target and command.name not in READ_ONLY_COMMANDS:
             raise CommandParseError("该操作不能指定其他用户")
         return ParsedCommand(command.name, command.arguments, target, command.trigger)
 
     def _formal_tail(self, text: str) -> str | None:
-        for root in sorted(self.roots, key=len, reverse=True):
+        for root in self.roots:
             if text.casefold() == root.casefold():
                 return ""
             prefix = f"{root} "
@@ -174,15 +175,17 @@ class CommandParser:
         raise CommandParseError("命令格式不正确，请使用 /kh 帮助 查看用法")
 
     def _parse_keyword(self, text: str) -> ParsedCommand | None:
+        """精确匹配关键词，支持参数的命令以空白分隔参数。"""
         if text.casefold() in {"kh练度", "鸣潮练度", "kh面板", "鸣潮面板"}:
             raise CommandParseError("该命令已移除，请使用 /kh 角色")
+        folded_text = text.casefold()
         for keyword, name, accepts_argument in self.keyword_registry:
             folded = keyword.casefold()
-            if text.casefold() == folded:
+            if folded_text == folded:
                 if name == CommandName.SWITCH:
                     raise CommandParseError("切换参数不能为空")
                 return ParsedCommand(name, trigger="keyword")
-            if text[: len(keyword)].casefold() != folded:
+            if not folded_text.startswith(folded):
                 continue
             remainder = text[len(keyword) :]
             if name == CommandName.CHARACTER_LIST and _PAGE.fullmatch(remainder):

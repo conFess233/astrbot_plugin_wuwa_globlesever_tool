@@ -178,6 +178,7 @@ class GlobalAuthClient:
             asyncio.TimeoutError,
             OSError,
             RuntimeError,
+            ValueError,
         ) as exc:
             raise AuthenticationUnavailableError("无法获取国际服游戏账号列表") from exc
         if not isinstance(payload, dict) or self._integer(payload.get("code"), default=-1) != 0:

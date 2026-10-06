@@ -110,11 +110,22 @@ class BrowserSession:
 
 
 @dataclass(frozen=True, slots=True)
+class LoginCompletionResult:
+    qq_id: str
+    origin_context: str
+    email_masked: str
+    selected_accounts: tuple[RegionUid, ...]
+    default_account: RegionUid
+
+
+@dataclass(frozen=True, slots=True)
 class LoginSubmitResult:
     risk_required: bool
     captcha_id: str | None = None
     players: tuple[GuidePlayer, ...] = ()
     email_masked: str | None = None
+    completed: LoginCompletionResult | None = None
+    notice: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,12 +134,3 @@ class BrowserLoginState:
     expires_at: datetime
     email_masked: str | None = None
     players: tuple[GuidePlayer, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class LoginCompletionResult:
-    qq_id: str
-    origin_context: str
-    email_masked: str
-    selected_accounts: tuple[RegionUid, ...]
-    default_account: RegionUid

@@ -44,6 +44,8 @@ class PluginSettings:
     login_email_max_attempts: int
     login_ip_max_attempts: int
     login_freeze_minutes: int
+    login_auto_retry_count: int
+    login_auto_bind_all: bool
     auto_sync_enabled: bool
     auto_sync_interval_minutes: int
     sync_concurrency: int
@@ -137,6 +139,8 @@ class PluginSettings:
             login_email_max_attempts=cls._bounded_int(values, "login_email_max_attempts", 8, 1, 30),
             login_ip_max_attempts=cls._bounded_int(values, "login_ip_max_attempts", 20, 1, 100),
             login_freeze_minutes=cls._bounded_int(values, "login_freeze_minutes", 15, 1, 120),
+            login_auto_retry_count=cls._bounded_int(values, "login_auto_retry_count", 3, 1, 5),
+            login_auto_bind_all=bool(values.get("login_auto_bind_all", True)),
             auto_sync_enabled=bool(values.get("auto_sync_enabled", False)),
             auto_sync_interval_minutes=cls._bounded_int(
                 values,

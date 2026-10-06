@@ -60,6 +60,8 @@ const CONFIG = [
     ["login_email_max_attempts", "邮箱窗口最大尝试次数", "number", "允许 1–30"],
     ["login_ip_max_attempts", "IP 窗口最大尝试次数", "number", "允许 1–100"],
     ["login_freeze_minutes", "登录冻结时间（分钟）", "number", "允许 1–120"],
+    ["login_auto_retry_count", "登录自动尝试总次数", "number", "默认 3，允许 1–5；包含首次请求，最终失败计数一次"],
+    ["login_auto_bind_all", "登录后自动绑定全部账号", "bool", "以首个为默认；关闭后手动选择，绑定冲突时返回选择页"],
   ]],
   ["同步与运行", "sync", [
     ["auto_sync_enabled", "启用自动同步", "bool", "按配置周期刷新已绑定 UID"],

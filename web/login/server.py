@@ -240,7 +240,7 @@ class PublicLoginServer:
         try:
             payload = await self._payload(request)
             session_token, csrf_token = self._session_credentials(request)
-            result = await self._service().submit_credentials(
+            result = await self._service().composite_login(
                 session_token,
                 csrf_token,
                 str(payload.get("email") or ""),
@@ -252,10 +252,26 @@ class PublicLoginServer:
             )
             if result.risk_required:
                 return web.json_response({"status": "risk", "captcha_id": result.captcha_id})
+            if result.completed is not None:
+                self._schedule_completion(result.completed)
+                response = web.json_response(
+                    {
+                        "status": "completed",
+                        "email_masked": result.completed.email_masked,
+                        "selected_count": len(result.completed.selected_accounts),
+                        "default_account": {
+                            "region_id": result.completed.default_account.region_id,
+                            "uid": result.completed.default_account.uid,
+                        },
+                    }
+                )
+                self._clear_session_cookies(response)
+                return response
             return web.json_response(
                 {
                     "status": "selecting",
                     "email_masked": result.email_masked,
+                    "notice": result.notice,
                     "players": [self._player_payload(player) for player in result.players],
                 }
             )
