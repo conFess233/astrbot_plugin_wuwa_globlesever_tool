@@ -3,13 +3,14 @@
 import asyncio
 import contextlib
 import json
-import logging
 import random
 import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TypeVar
+
+from astrbot.api import logger
 
 from ...domain.catalog import CatalogError, CharacterCatalog
 from ...domain.models import RegionUid
@@ -36,7 +37,6 @@ from .credentials import (
 )
 
 _T = TypeVar("_T")
-logger = logging.getLogger(__name__)
 _LANGUAGE_MAP = {
     "zh-CN": "zh-Hans",
     "zh-TW": "zh-Hant",

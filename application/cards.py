@@ -1,7 +1,8 @@
 """从查询记录构建统一 ViewModel，并通过 AstrBot HTML 渲染图片卡。"""
 
-import logging
 from datetime import UTC, datetime
+
+from astrbot.api import logger
 
 from ..domain.cards import (
     AccountInfoCard,
@@ -20,8 +21,6 @@ from ..domain.catalog import CharacterCatalog
 from ..domain.player import PlayerSnapshot
 from ..infrastructure.database.repositories.local_data import CharacterRecord, ProfileSelection
 from ..presentation.cards import AstrBotCardRenderer
-
-logger = logging.getLogger(__name__)
 
 _SOURCE_NAMES = {"api": "接口", "manual": "手动", "mixed": "混合"}
 _ELEMENT_NAMES = {
