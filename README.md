@@ -4,7 +4,7 @@
 
 面向 AstrBot 的鸣潮国际服账号绑定、数据刷新、本地档案与统一图片卡插件
 
-[![Version 0.6.1](https://img.shields.io/badge/version-0.6.1-c8a96a)](CHANGELOG.md)
+[![Version 0.6.2](https://img.shields.io/badge/version-0.6.2-c8a96a)](CHANGELOG.md)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.24.2%20%3C5-6f42c1)](https://github.com/AstrBotDevs/AstrBot)
 [![Platform](https://img.shields.io/badge/OneBot_11-QQ-12b7f5)](https://github.com/botuniverse/onebot-11)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green)](LICENSE)
