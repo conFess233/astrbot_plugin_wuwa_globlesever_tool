@@ -12,7 +12,7 @@ from astrbot.api.star import Context, Star, register
 
 from .application.admin.dashboard import DashboardService
 from .application.admin.export import BackupService
-from .application.cards import CardService
+from .application.cards import HELP_SECTIONS, CardService
 from .application.commands import CommandService, CommandServiceError
 from .application.login import LoginSessionError, LoginSessionService
 from .application.refresh import (
@@ -301,6 +301,15 @@ class WuWaGlobalServerPlugin(Star):
         self.sync_service.start_auto_sync()
         self._initialized = True
         logger.info("%s：本地档案与国际服登录服务初始化完成", PLUGIN_DISPLAY_NAME)
+
+    def get_help_commands(self) -> list[dict[str, str]]:
+        """向帮助面板提供正式命令用法，包含当前生效的额外入口。"""
+        return [
+            {"name": f"{root.lstrip('/')} {command.removeprefix('/kh ')}", "desc": desc}
+            for root in self.parser.roots
+            for section in HELP_SECTIONS
+            for command, desc in section.commands
+        ]
 
     @filter.command("kh")
     async def root_command(self, event: AstrMessageEvent, argument: str = ""):
